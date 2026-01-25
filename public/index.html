@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Local Weather</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="title">
+      <h1>Weather</h1>
+      <div class="subtitle" id="subtitle">—</div>
+    </div>
+
+    <div class="controls">
+      <div class="segmented" role="group" aria-label="Temperature units">
+        <button id="unitF" class="seg-btn is-active" type="button">°F</button>
+        <button id="unitC" class="seg-btn" type="button">°C</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+    <section id="errorBox" class="error hidden" role="alert"></section>
+
+    <section class="card">
+      <div class="card-header">
+        <div>
+          <div class="label">Latest</div>
+          <div class="value" id="latestTime">—</div>
+        </div>
+        <button id="refreshBtn" class="btn" type="button">Refresh</button>
+      </div>
+
+      <div class="grid">
+        <div class="metric">
+          <div class="label">Temperature</div>
+          <div class="big" id="tempValue">—</div>
+        </div>
+        <div class="metric">
+          <div class="label">Humidity</div>
+          <div class="big" id="rhValue">—</div>
+        </div>
+        <div class="metric">
+          <div class="label">Sea-level Pressure</div>
+          <div class="big" id="pslpValue">—</div>
+          <div class="sub" id="pslpTrend">—</div>
+        </div>
+        <div class="metric">
+          <div class="label">RSSI</div>
+          <div class="big" id="rssiValue">—</div>
+        </div>
+      </div>
+
+      <div class="spark-wrap">
+        <div class="label">Temp trend</div>
+        <canvas id="spark" width="600" height="120"></canvas>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-header">
+        <div>
+          <div class="label">History</div>
+          <div class="value" id="rangeLabel">Last 3h</div>
+        </div>
+        <a id="csvLink" class="btn btn-secondary" href="#" download>CSV</a>
+      </div>
+
+      <div class="range">
+        <button class="chip is-active" data-range="1h" type="button">1h</button>
+        <button class="chip" data-range="3h" type="button">3h</button>
+        <button class="chip" data-range="6h" type="button">6h</button>
+        <button class="chip" data-range="12h" type="button">12h</button>
+        <button class="chip" data-range="24h" type="button">24h</button>
+        <button class="chip" data-range="7d" type="button">7d</button>
+      </div>
+
+      <div class="table-wrap">
+        <table class="table" aria-label="Recent readings">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Temp</th>
+              <th>RH</th>
+              <th>SLP</th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>
+
