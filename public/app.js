@@ -500,7 +500,7 @@ function renderLatest(state, els) {
   const station = payload.station_id || (state.stationId ?? "—");
   const rel = payload.ts_ms ? `${Math.max(0, Math.round((Date.now() - payload.ts_ms) / 1000))}s` : "—";
   const abs = payload.ts_ms ? new Date(payload.ts_ms).toLocaleString() : "—";
-  els.subtitle.textContent = `${station} • ${rel} • ${abs}`;
+  els.subtitle.textContent = `${station} • measured ${rel} ago • ${abs}`;
 }
 
 /**
