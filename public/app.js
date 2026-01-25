@@ -472,8 +472,6 @@ function createWeatherDashboard() {
   }
 
   function renderTable() {
-    els.rowsTbody.innerHTML = "";
-
     let tableRenderToken = 0;
 
     async function renderTable() {
@@ -509,20 +507,9 @@ function createWeatherDashboard() {
 
         els.rowsTbody.appendChild(frag);
 
-        // Yield to the browser so scrolling/taps remain responsive
+        // Yield so scrolling/taps stay responsive on iOS
         await new Promise(requestAnimationFrame);
       }
-    }
-
-    for (const r of lastRows) {
-      const tr = document.createElement("tr");
-      tr.innerHTML = `
-        <td>${formatTime(r.ts_ms)}</td>
-        <td>${formatTemp(r.t_c, state.unit)}</td>
-        <td>${formatRh(r.rh)}</td>
-        <td>${formatPressure(r.p_slp_pa)}</td>
-      `;
-      els.rowsTbody.appendChild(tr);
     }
   }
 
@@ -713,10 +700,10 @@ function createWeatherDashboard() {
     });
 
     els.backToTop.addEventListener("click", () => {
-      window.scrollTo({ top: 0, behavior: "smooth" });
+      window.scrollTo({top: 0, behavior: "smooth"});
     });
 
-    window.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("scroll", onScroll, {passive: true});
     onScroll(); // set initial visibility
   }
 
