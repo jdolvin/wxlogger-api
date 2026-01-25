@@ -1,48 +1,225 @@
-const el = (id) => document.getElementById(id);
+/**
+ * Weather Dashboard Client
+ * ------------------------
+ * Responsibilities:
+ *  - Fetch and render "latest" station telemetry
+ *  - Fetch and render "range" telemetry (table, sparkline, pressure trend)
+ *  - Manage UI state (unit, range, station filter)
+ *
+ * Notes:
+ *  - This is written as a single-file module for easy drop-in use.
+ *  - If you move to a bundler, export `createWeatherDashboard()` and import it.
+ */
 
-const state = {
-  unit: "F",        // default Fahrenheit
-  range: "3h",      // default last 3 hours
-  stationId: null,  // you can add a UI later if needed
-  latest: null,
-  rangeRows: []
-};
+/** @typedef {"F"|"C"} Unit */
+/** @typedef {"1h"|"3h"|"6h"|"12h"|"24h"|"7d"} RangeKey */
 
-function cToF(c) { return (c * 9/5) + 32; }
+/**
+ * @typedef {Object} LatestMetrics
+ * @property {number=} t_c
+ * @property {number=} rh
+ * @property {number=} p_slp_pa
+ * @property {number=} rssi_dbm
+ */
 
-function fmtTemp(t_c) {
-  if (t_c === null || t_c === undefined || Number.isNaN(Number(t_c))) return "—";
-  const c = Number(t_c);
-  const v = state.unit === "F" ? cToF(c) : c;
-  return `${v.toFixed(1)}°${state.unit}`;
+/**
+ * @typedef {Object} LatestPayload
+ * @property {string=} station_id
+ * @property {number=} ts_ms
+ * @property {number=} ts_recv_ms
+ * @property {LatestMetrics=} metrics
+ */
+
+/**
+ * @typedef {Object} RangeRow
+ * @property {number=} ts_ms
+ * @property {number=} t_c
+ * @property {number=} rh
+ * @property {number=} p_slp_pa
+ */
+
+/**
+ * @typedef {Object} RangePayload
+ * @property {RangeRow[]=} rows
+ */
+
+/**
+ * @typedef {Object} DashboardState
+ * @property {Unit} unit
+ * @property {RangeKey} range
+ * @property {string|null} stationId
+ * @property {LatestPayload|null} latest
+ * @property {RangeRow[]} rangeRows
+ */
+
+/**
+ * @typedef {Object} DashboardEls
+ * @property {HTMLElement} errorBox
+ * @property {HTMLElement} subtitle
+ * @property {HTMLElement} latestTime
+ * @property {HTMLElement} tempValue
+ * @property {HTMLElement} rhValue
+ * @property {HTMLElement} pslpValue
+ * @property {HTMLElement} rssiValue
+ * @property {HTMLElement} rangeLabel
+ * @property {HTMLAnchorElement} csvLink
+ * @property {HTMLTableSectionElement} rowsTbody
+ * @property {HTMLCanvasElement} spark
+ * @property {HTMLElement} pslpTrend
+ * @property {HTMLButtonElement} refreshBtn
+ * @property {HTMLElement} unitF
+ * @property {HTMLElement} unitC
+ */
+
+const RANGE_MS = /** @type {const} */ ({
+  "1h": 1 * 3600e3,
+  "3h": 3 * 3600e3,
+  "6h": 6 * 3600e3,
+  "12h": 12 * 3600e3,
+  "24h": 24 * 3600e3,
+  "7d": 7 * 24 * 3600e3
+});
+
+const DEFAULTS = /** @type {const} */ ({
+  unit: /** @type {Unit} */ ("F"),
+  range: /** @type {RangeKey} */ ("3h"),
+  latestPollMs: 15000,
+  requestTimeoutMs: 8000,
+  maxTableRows: 50,
+  maxRangeLimit: 50000
+});
+
+/** @param {string} id */
+function getEl(id) {
+  const node = document.getElementById(id);
+  if (!node) throw new Error(`Missing required element #${id}`);
+  return node;
 }
 
-function fmtRH(rh) {
-  if (rh === null || rh === undefined || Number.isNaN(Number(rh))) return "—";
-  return `${Number(rh).toFixed(1)}%`;
+/**
+ * @param {string} id
+ * @returns {HTMLCanvasElement}
+ */
+function getCanvas(id) {
+  const node = /** @type {HTMLCanvasElement} */ (getEl(id));
+  if (!(node instanceof HTMLCanvasElement)) throw new Error(`#${id} is not a <canvas>`);
+  return node;
 }
 
+/**
+ * @param {string} id
+ * @returns {HTMLAnchorElement}
+ */
+function getAnchor(id) {
+  const node = /** @type {HTMLAnchorElement} */ (getEl(id));
+  if (!(node instanceof HTMLAnchorElement)) throw new Error(`#${id} is not an <a>`);
+  return node;
+}
+
+/**
+ * @param {string} id
+ * @returns {HTMLTableSectionElement}
+ */
+function getTbody(id) {
+  const node = /** @type {HTMLTableSectionElement} */ (getEl(id));
+  if (!(node instanceof HTMLTableSectionElement)) throw new Error(`#${id} is not a <tbody>`);
+  return node;
+}
+
+/**
+ * Convert Celsius -> Fahrenheit.
+ * @param {number} c
+ */
+function cToF(c) {
+  return (c * 9) / 5 + 32;
+}
+
+/**
+ * Convert Pascals -> inHg.
+ * @param {number} pa
+ */
 function paToInHg(pa) {
   return pa * 0.0002953;
 }
 
-function fmtPa(pa) {
-  if (pa === null || pa === undefined || Number.isNaN(Number(pa))) return "—";
-  const inHg = paToInHg(Number(pa));
-  return `${inHg.toFixed(2)} inHg`;
+/**
+ * Basic finite-number guard.
+ * @param {unknown} x
+ * @returns {x is number}
+ */
+function isFiniteNumber(x) {
+  return Number.isFinite(Number(x));
 }
 
-function fmtRssi(rssi) {
-  if (rssi === null || rssi === undefined || Number.isNaN(Number(rssi))) return "—";
+/**
+ * @param {unknown} t_c
+ * @param {Unit} unit
+ */
+function formatTemp(t_c, unit) {
+  if (!isFiniteNumber(t_c)) return "—";
+  const c = Number(t_c);
+  const v = unit === "F" ? cToF(c) : c;
+  return `${v.toFixed(1)}°${unit}`;
+}
+
+/** @param {unknown} rh */
+function formatRh(rh) {
+  if (!isFiniteNumber(rh)) return "—";
+  return `${Number(rh).toFixed(1)}%`;
+}
+
+/** @param {unknown} pa */
+function formatPressure(pa) {
+  if (!isFiniteNumber(pa)) return "—";
+  return `${paToInHg(Number(pa)).toFixed(2)} inHg`;
+}
+
+/** @param {unknown} rssi */
+function formatRssi(rssi) {
+  if (!isFiniteNumber(rssi)) return "—";
   return `${Number(rssi)} dBm`;
 }
 
-function fmtTime(ms) {
-  if (!ms) return "—";
-  const d = new Date(Number(ms));
-  return d.toLocaleString();
+/** @param {unknown} ms */
+function formatTime(ms) {
+  if (!isFiniteNumber(ms) || Number(ms) <= 0) return "—";
+  return new Date(Number(ms)).toLocaleString();
 }
 
+/** @param {unknown} ms */
+function formatRelativeTime(ms) {
+  if (!isFiniteNumber(ms) || Number(ms) <= 0) return "—";
+  const diff = Date.now() - Number(ms);
+  const s = Math.floor(diff / 1000);
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 48) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
+/**
+ * Signed delta formatter (ex: +0.03, -0.12).
+ * @param {unknown} x
+ * @param {number} digits
+ */
+function formatDeltaSigned(x, digits = 2) {
+  if (!isFiniteNumber(x)) return "";
+  const v = Number(x);
+  const s = v > 0 ? "+" : "";
+  return `${s}${v.toFixed(digits)}`;
+}
+
+/**
+ * Compute delta between first/last finite values for a numeric field.
+ * Expects rows in chronological order (oldest -> newest).
+ *
+ * @template {Record<string, any>} T
+ * @param {T[]} rows
+ * @param {keyof T} field
+ * @returns {{first:number,last:number,delta:number}|null}
+ */
 function computeTrend(rows, field) {
   const vals = (rows || [])
     .map(r => Number(r[field]))
@@ -52,302 +229,373 @@ function computeTrend(rows, field) {
 
   const first = vals[0];
   const last = vals[vals.length - 1];
-  const delta = last - first;
-
-  return { first, last, delta };
+  return { first, last, delta: last - first };
 }
 
-function fmtDeltaSigned(x, digits = 2) {
-  const v = Number(x);
-  if (!Number.isFinite(v)) return "";
-  const s = v > 0 ? "+" : "";
-  return `${s}${v.toFixed(digits)}`;
+/**
+ * Small helper for URL query building.
+ * @param {Record<string, string>} baseParams
+ * @param {string|null} stationId
+ */
+function withStation(baseParams, stationId) {
+  const params = new URLSearchParams(baseParams);
+  if (stationId) params.set("station_id", stationId);
+  return params;
 }
 
-function relTime(ms) {
-  if (!ms) return "—";
-  const diff = Date.now() - Number(ms);
-  const s = Math.floor(diff / 1000);
-  if (s < 60) return `${s}s ago`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 48) return `${h}h ago`;
-  const days = Math.floor(h / 24);
-  return `${days}d ago`;
-}
-
-function rangeToMs(range) {
-  const now = Date.now();
-  const map = {
-    "1h": 1 * 3600e3,
-    "3h": 3 * 3600e3,
-    "6h": 6 * 3600e3,
-    "12h": 12 * 3600e3,
-    "24h": 24 * 3600e3,
-    "7d": 7 * 24 * 3600e3
-  };
-  return { from_ms: now - (map[range] || map["3h"]), to_ms: now };
-}
-
-function setError(msg) {
-  const box = el("errorBox");
-  if (!msg) {
-    box.classList.add("hidden");
-    box.textContent = "";
-    return;
-  }
-  box.textContent = msg;
-  box.classList.remove("hidden");
-}
-
-async function fetchJson(url) {
+/**
+ * Fetch JSON with an iOS-friendly timeout and no-store caching.
+ * @template T
+ * @param {string} url
+ * @param {number} timeoutMs
+ * @returns {Promise<T>}
+ */
+async function fetchJson(url, timeoutMs) {
   const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), 8000); // iOS-friendly timeout
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+
   try {
     const res = await fetch(url, { signal: ctrl.signal, cache: "no-store" });
     if (!res.ok) {
       const text = await res.text().catch(() => "");
       throw new Error(`HTTP ${res.status} ${res.statusText}${text ? ` — ${text}` : ""}`);
     }
-    return await res.json();
+    return /** @type {Promise<T>} */ (res.json());
   } finally {
     clearTimeout(t);
   }
 }
 
-function updateLatestUI() {
-  const l = state.latest;
-  if (!l) return;
+/**
+ * Create and start the dashboard runtime.
+ * Keep this as a single entrypoint to make future extraction to a module trivial.
+ */
+function createWeatherDashboard() {
+  /** @type {DashboardEls} */
+  const els = {
+    errorBox: getEl("errorBox"),
+    subtitle: getEl("subtitle"),
+    latestTime: getEl("latestTime"),
+    tempValue: getEl("tempValue"),
+    rhValue: getEl("rhValue"),
+    pslpValue: getEl("pslpValue"),
+    rssiValue: getEl("rssiValue"),
+    rangeLabel: getEl("rangeLabel"),
+    csvLink: getAnchor("csvLink"),
+    rowsTbody: getTbody("rows"),
+    spark: getCanvas("spark"),
+    pslpTrend: getEl("pslpTrend"),
+    refreshBtn: /** @type {HTMLButtonElement} */ (getEl("refreshBtn")),
+    unitF: getEl("unitF"),
+    unitC: getEl("unitC")
+  };
 
-  el("subtitle").textContent = `${l.station_id || "—"} • ${relTime(l.ts_ms)} • ${fmtTime(l.ts_ms)}`;
-  el("latestTime").textContent = `Event: ${fmtTime(l.ts_ms)} • Recv: ${fmtTime(l.ts_recv_ms)}`;
-  el("tempValue").textContent = fmtTemp(l.metrics?.t_c);
-  el("rhValue").textContent = fmtRH(l.metrics?.rh);
-  el("pslpValue").textContent = fmtPa(l.metrics?.p_slp_pa);
-  el("rssiValue").textContent = fmtRssi(l.metrics?.rssi_dbm);
-}
+  /** @type {DashboardState} */
+  const state = {
+    unit: DEFAULTS.unit,
+    range: DEFAULTS.range,
+    stationId: null,
+    latest: null,
+    rangeRows: []
+  };
 
-function updatePressureTrend() {
-  const out = el("pslpTrend");
-  if (!out) return;
-
-  const rows = state.rangeRows || [];
-  const t = computeTrend(rows, "p_slp_pa");
-  if (!t) {
-    out.textContent = "—";
-    return;
+  /**
+   * Error rendering should never throw.
+   * @param {string} msg
+   */
+  function setError(msg) {
+    if (!msg) {
+      els.errorBox.classList.add("hidden");
+      els.errorBox.textContent = "";
+      return;
+    }
+    els.errorBox.textContent = msg;
+    els.errorBox.classList.remove("hidden");
   }
 
-  const deltaInHg = paToInHg(t.delta);
-
-  // Threshold to avoid noise-driven arrow flipping
-  let arrow = "→";
-  if (deltaInHg > 0.01) arrow = "↑";
-  else if (deltaInHg < -0.01) arrow = "↓";
-
-  out.textContent = `${arrow} ${fmtDeltaSigned(deltaInHg, 2)} inHg over ${state.range}`;
-}
-
-function updateTable() {
-  const tbody = el("rows");
-  tbody.innerHTML = "";
-
-  const rows = state.rangeRows || [];
-  // show newest first in the table (more useful on mobile)
-  const last = [...rows].reverse().slice(0, 50);
-
-  for (const r of last) {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `
-      <td>${fmtTime(r.ts_ms)}</td>
-      <td>${fmtTemp(r.t_c)}</td>
-      <td>${fmtRH(r.rh)}</td>
-      <td>${fmtPa(r.p_slp_pa)}</td>
-    `;
-    tbody.appendChild(tr);
+  function getRangeWindowMs() {
+    const now = Date.now();
+    const span = RANGE_MS[state.range] ?? RANGE_MS[DEFAULTS.range];
+    return { from_ms: now - span, to_ms: now };
   }
-}
 
-function drawSparkline() {
-  const canvas = el("spark");
-  const ctx = canvas.getContext("2d");
-  const rows = state.rangeRows || [];
+  function updateCsvLink() {
+    const { from_ms, to_ms } = getRangeWindowMs();
+    const params = withStation(
+      {
+        from_ms: String(from_ms),
+        to_ms: String(to_ms),
+        limit: String(DEFAULTS.maxRangeLimit)
+      },
+      state.stationId
+    );
+    els.csvLink.href = `/api/weather.csv?${params.toString()}`;
+  }
 
-  // Clear
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  function renderLatest() {
+    const l = state.latest;
+    if (!l) return;
 
-  if (rows.length < 2) {
-    // basic placeholder line
-    ctx.globalAlpha = 0.7;
+    els.subtitle.textContent = `${l.station_id || "—"} • ${formatRelativeTime(l.ts_ms)} • ${formatTime(l.ts_ms)}`;
+    els.latestTime.textContent = `Event: ${formatTime(l.ts_ms)} • Recv: ${formatTime(l.ts_recv_ms)}`;
+    els.tempValue.textContent = formatTemp(l.metrics?.t_c, state.unit);
+    els.rhValue.textContent = formatRh(l.metrics?.rh);
+    els.pslpValue.textContent = formatPressure(l.metrics?.p_slp_pa);
+    els.rssiValue.textContent = formatRssi(l.metrics?.rssi_dbm);
+  }
+
+  function renderPressureTrend() {
+    const rows = state.rangeRows;
+    const t = computeTrend(rows, "p_slp_pa");
+    if (!t) {
+      els.pslpTrend.textContent = "—";
+      return;
+    }
+
+    const deltaInHg = paToInHg(t.delta);
+
+    // Threshold to avoid noise-driven arrow flipping
+    let arrow = "→";
+    if (deltaInHg > 0.01) arrow = "↑";
+    else if (deltaInHg < -0.01) arrow = "↓";
+
+    els.pslpTrend.textContent = `${arrow} ${formatDeltaSigned(deltaInHg, 2)} inHg over ${state.range}`;
+  }
+
+  function renderTable() {
+    els.rowsTbody.innerHTML = "";
+
+    // Rows are assumed oldest->newest. We want newest first for mobile.
+    const lastRows = [...state.rangeRows].reverse().slice(0, DEFAULTS.maxTableRows);
+
+    for (const r of lastRows) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${formatTime(r.ts_ms)}</td>
+        <td>${formatTemp(r.t_c, state.unit)}</td>
+        <td>${formatRh(r.rh)}</td>
+        <td>${formatPressure(r.p_slp_pa)}</td>
+      `;
+      els.rowsTbody.appendChild(tr);
+    }
+  }
+
+  function renderSparkline() {
+    const canvas = els.spark;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const rows = state.rangeRows;
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    if (rows.length < 2) {
+      ctx.globalAlpha = 0.7;
+      ctx.beginPath();
+      ctx.moveTo(12, canvas.height / 2);
+      ctx.lineTo(canvas.width - 12, canvas.height / 2);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      return;
+    }
+
+    // Use t_c
+    const valuesC = rows.map(r => Number(r.t_c)).filter(v => Number.isFinite(v));
+    if (valuesC.length < 2) return;
+
+    const values = valuesC.map(v => (state.unit === "F" ? cToF(v) : v));
+
+    let min = Math.min(...values);
+    let max = Math.max(...values);
+    if (min === max) {
+      min -= 1;
+      max += 1;
+    }
+
+    const padX = 12,
+      padY = 14;
+    const W = canvas.width - padX * 2;
+    const H = canvas.height - padY * 2;
+
+    // Grid baseline
+    ctx.globalAlpha = 0.35;
     ctx.beginPath();
-    ctx.moveTo(12, canvas.height / 2);
-    ctx.lineTo(canvas.width - 12, canvas.height / 2);
+    ctx.moveTo(padX, padY + H);
+    ctx.lineTo(padX + W, padY + H);
     ctx.stroke();
     ctx.globalAlpha = 1;
-    return;
+
+    // Fill gradient
+    const grad = ctx.createLinearGradient(0, padY, 0, padY + H);
+    grad.addColorStop(0, "rgba(0, 200, 255, 0.6)");
+    grad.addColorStop(1, "rgba(0, 200, 255, 0.05)");
+
+    // Area path
+    ctx.beginPath();
+    values.forEach((v, i) => {
+      const x = padX + (i / (values.length - 1)) * W;
+      const y = padY + (1 - (v - min) / (max - min)) * H;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.lineTo(padX + W, padY + H);
+    ctx.lineTo(padX, padY + H);
+    ctx.closePath();
+
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    // Outline
+    ctx.beginPath();
+    values.forEach((v, i) => {
+      const x = padX + (i / (values.length - 1)) * W;
+      const y = padY + (1 - (v - min) / (max - min)) * H;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+
+    ctx.strokeStyle = "#00d4ff";
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+
+    // Labels (min/max)
+    ctx.globalAlpha = 0.7;
+    ctx.font = "12px system-ui, -apple-system, Segoe UI, Roboto, Arial";
+    ctx.fillText(`${max.toFixed(1)}°${state.unit}`, padX, 12);
+    ctx.fillText(`${min.toFixed(1)}°${state.unit}`, padX, canvas.height - 6);
+    ctx.globalAlpha = 1;
   }
 
-  // Use t_c
-  const valuesC = rows.map(r => Number(r.t_c)).filter(v => Number.isFinite(v));
-  if (valuesC.length < 2) return;
-
-  const values = valuesC.map(v => state.unit === "F" ? cToF(v) : v);
-
-  let min = Math.min(...values);
-  let max = Math.max(...values);
-  if (min === max) { min -= 1; max += 1; }
-
-  const padX = 12, padY = 14;
-  const W = canvas.width - padX * 2;
-  const H = canvas.height - padY * 2;
-
-  // Grid baseline
-  ctx.globalAlpha = 0.35;
-  ctx.beginPath();
-  ctx.moveTo(padX, padY + H);
-  ctx.lineTo(padX + W, padY + H);
-  ctx.stroke();
-  ctx.globalAlpha = 1;
-
-  // Bright gradient fill
-  const grad = ctx.createLinearGradient(0, padY, 0, padY + H);
-  grad.addColorStop(0, "rgba(0, 200, 255, 0.6)");
-  grad.addColorStop(1, "rgba(0, 200, 255, 0.05)");
-
-  ctx.beginPath();
-  values.forEach((v, i) => {
-    const x = padX + (i / (values.length - 1)) * W;
-    const y = padY + (1 - (v - min) / (max - min)) * H;
-    if (i === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
-  });
-
- // Close shape to bottom for fill
-  ctx.lineTo(padX + W, padY + H);
-  ctx.lineTo(padX, padY + H);
-  ctx.closePath();
-
-  ctx.fillStyle = grad;
-  ctx.fill();
-
-  // Bright outline
-  ctx.beginPath();
-  values.forEach((v, i) => {
-    const x = padX + (i / (values.length - 1)) * W;
-    const y = padY + (1 - (v - min) / (max - min)) * H;
-    if (i === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
-  });
-
-  ctx.strokeStyle = "#00d4ff";
-  ctx.lineWidth = 2.5;
-  ctx.stroke();
-
-
-  // Labels (min/max)
-  ctx.globalAlpha = 0.7;
-  ctx.font = "12px system-ui, -apple-system, Segoe UI, Roboto, Arial";
-  ctx.fillText(`${max.toFixed(1)}°${state.unit}`, padX, 12);
-  ctx.fillText(`${min.toFixed(1)}°${state.unit}`, padX, canvas.height - 6);
-  ctx.globalAlpha = 1;
-}
-
-function updateCsvLink() {
-  const { from_ms, to_ms } = rangeToMs(state.range);
-  const params = new URLSearchParams({
-    from_ms: String(from_ms),
-    to_ms: String(to_ms),
-    limit: "50000"
-  });
-  if (state.stationId) params.set("station_id", state.stationId);
-
-  el("csvLink").href = `/api/weather.csv?${params.toString()}`;
-}
-
-function setRange(range) {
-  state.range = range;
-  el("rangeLabel").textContent = `Last ${range}`;
-  document.querySelectorAll(".chip").forEach(b => {
-    b.classList.toggle("is-active", b.dataset.range === range);
-  });
-  updateCsvLink();
-  refreshRange();
-}
-
-async function refreshLatest() {
-  setError("");
-  const params = new URLSearchParams();
-  if (state.stationId) params.set("station_id", state.stationId);
-
-  try {
-    const data = await fetchJson(`/api/weather/latest?${params.toString()}`);
-    state.latest = data;
-    updateLatestUI();
-  } catch (e) {
-    setError(`Latest failed: ${e.message}`);
+  function renderAll() {
+    renderLatest();
+    renderTable();
+    renderSparkline();
+    renderPressureTrend();
+    updateCsvLink();
   }
-}
 
-async function refreshRange() {
-  setError("");
-  const { from_ms, to_ms } = rangeToMs(state.range);
-  const params = new URLSearchParams({
-    from_ms: String(from_ms),
-    to_ms: String(to_ms),
-    limit: "50000"
-  });
-  if (state.stationId) params.set("station_id", state.stationId);
-
-  try {
-    const data = await fetchJson(`/api/weather/range?${params.toString()}`);
-    state.rangeRows = data.rows || [];
-    updateTable();
-    drawSparkline();
-    updatePressureTrend();
-  } catch (e) {
-    setError(`Range failed: ${e.message}`);
+  /** @param {Unit} unit */
+  function setUnit(unit) {
+    state.unit = unit;
+    els.unitF.classList.toggle("is-active", unit === "F");
+    els.unitC.classList.toggle("is-active", unit === "C");
+    renderAll();
   }
-}
 
-function setUnit(unit) {
-  state.unit = unit;
-  el("unitF").classList.toggle("is-active", unit === "F");
-  el("unitC").classList.toggle("is-active", unit === "C");
+  /** @param {RangeKey} range */
+  function setRange(range) {
+    state.range = range;
+    els.rangeLabel.textContent = `Last ${range}`;
 
-  // Redraw with new unit
-  updateLatestUI();
-  updateTable();
-  drawSparkline();
-}
+    document.querySelectorAll(".chip").forEach(btn => {
+      const b = /** @type {HTMLElement} */ (btn);
+      b.classList.toggle("is-active", b.dataset.range === range);
+    });
 
-function wireUI() {
-  el("refreshBtn").addEventListener("click", async () => {
+    updateCsvLink();
+    void refreshRange(); // deliberate fire-and-forget (errors handled internally)
+  }
+
+  async function refreshLatest() {
+    setError("");
+    const params = withStation({}, state.stationId);
+
+    try {
+      const data = await fetchJson(
+        `/api/weather/latest?${params.toString()}`,
+        DEFAULTS.requestTimeoutMs
+      );
+      state.latest = /** @type {LatestPayload} */ (data);
+      renderLatest();
+    } catch (e) {
+      setError(`Latest failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  async function refreshRange() {
+    setError("");
+    const { from_ms, to_ms } = getRangeWindowMs();
+
+    const params = withStation(
+      {
+        from_ms: String(from_ms),
+        to_ms: String(to_ms),
+        limit: String(DEFAULTS.maxRangeLimit)
+      },
+      state.stationId
+    );
+
+    try {
+      const data = await fetchJson(
+        `/api/weather/range?${params.toString()}`,
+        DEFAULTS.requestTimeoutMs
+      );
+      const payload = /** @type {RangePayload} */ (data);
+      state.rangeRows = payload.rows || [];
+      renderTable();
+      renderSparkline();
+      renderPressureTrend();
+    } catch (e) {
+      setError(`Range failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  function wireUI() {
+    els.refreshBtn.addEventListener("click", async () => {
+      await refreshLatest();
+      await refreshRange();
+    });
+
+    els.unitF.addEventListener("click", () => setUnit("F"));
+    els.unitC.addEventListener("click", () => setUnit("C"));
+
+    document.querySelectorAll(".chip").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const range = /** @type {RangeKey} */ (/** @type {HTMLElement} */ (btn).dataset.range);
+        setRange(range);
+      });
+    });
+  }
+
+  let latestTimer = /** @type {number|undefined} */ (undefined);
+
+  async function start() {
+    wireUI();
+    setUnit(DEFAULTS.unit);
+    setRange(DEFAULTS.range);
+
+    // Initial load
     await refreshLatest();
     await refreshRange();
-  });
 
-  el("unitF").addEventListener("click", () => setUnit("F"));
-  el("unitC").addEventListener("click", () => setUnit("C"));
+    // Gentle polling for “latest” (internal LAN, iOS-friendly)
+    latestTimer = window.setInterval(() => {
+      void refreshLatest();
+    }, DEFAULTS.latestPollMs);
+  }
 
-  document.querySelectorAll(".chip").forEach(btn => {
-    btn.addEventListener("click", () => setRange(btn.dataset.range));
-  });
+  function stop() {
+    if (latestTimer) window.clearInterval(latestTimer);
+    latestTimer = undefined;
+  }
 
-  // Default state
-  setUnit("F");
-  setRange("3h");
+  return {
+    start,
+    stop,
+
+    // Future expansion points (station selector UI, etc.)
+    /** @param {string|null} stationId */
+    setStationId(stationId) {
+      state.stationId = stationId;
+      updateCsvLink();
+      void refreshLatest();
+      void refreshRange();
+    }
+  };
 }
 
-(async function init() {
-  wireUI();
-  updateCsvLink();
-
-  // Initial load
-  await refreshLatest();
-  await refreshRange();
-
-  // Gentle polling for “latest” (internal LAN, iOS-friendly)
-  setInterval(refreshLatest, 15000);
+// Boot
+(() => {
+  const dashboard = createWeatherDashboard();
+  void dashboard.start();
 })();
-

@@ -1,99 +1,126 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>Local Weather</title>
-  <link rel="stylesheet" href="/styles.css" />
+    <!--
+      Local Weather Dashboard
+      ----------------------
+      This is intentionally “vanilla” HTML that pairs with /styles.css and /app.js.
+
+      Conventions:
+        - IDs are stable integration points for app.js (do not rename without updating JS).
+        - Buttons use type="button" to prevent accidental form submission on mobile.
+        - ARIA is applied where it adds value (alerts, groups, table labeling).
+    -->
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Local Weather</title>
+    <link rel="stylesheet" href="/styles.css" />
 </head>
+
 <body>
-  <header class="topbar">
+<a class="skip-link" href="#main">Skip to content</a>
+
+<header class="topbar" role="banner">
     <div class="title">
-      <h1>Weather</h1>
-      <div class="subtitle" id="subtitle">—</div>
+        <h1>Weather</h1>
+        <!-- JS fills this with "station • relative • absolute" -->
+        <p class="subtitle" id="subtitle">—</p>
     </div>
 
     <div class="controls">
-      <div class="segmented" role="group" aria-label="Temperature units">
-        <button id="unitF" class="seg-btn is-active" type="button">°F</button>
-        <button id="unitC" class="seg-btn" type="button">°C</button>
-      </div>
+        <div class="segmented" role="group" aria-label="Temperature units">
+            <!-- app.js toggles .is-active -->
+            <button id="unitF" class="seg-btn is-active" type="button" aria-pressed="true">°F</button>
+            <button id="unitC" class="seg-btn" type="button" aria-pressed="false">°C</button>
+        </div>
     </div>
-  </header>
+</header>
 
-  <main class="container">
-    <section id="errorBox" class="error hidden" role="alert"></section>
+<main id="main" class="container" role="main">
+    <!-- Error banner: hidden unless JS sets message -->
+    <section id="errorBox" class="error hidden" role="alert" aria-live="assertive"></section>
 
-    <section class="card">
-      <div class="card-header">
-        <div>
-          <div class="label">Latest</div>
-          <div class="value" id="latestTime">—</div>
-        </div>
-        <button id="refreshBtn" class="btn" type="button">Refresh</button>
-      </div>
+    <!-- Latest card -->
+    <section class="card" aria-labelledby="latestTitle">
+        <div class="card-header">
+            <div>
+                <div class="label" id="latestTitle">Latest</div>
+                <div class="value" id="latestTime">—</div>
+            </div>
 
-      <div class="grid">
-        <div class="metric">
-          <div class="label">Temperature</div>
-          <div class="big" id="tempValue">—</div>
+            <button id="refreshBtn" class="btn" type="button">Refresh</button>
         </div>
-        <div class="metric">
-          <div class="label">Humidity</div>
-          <div class="big" id="rhValue">—</div>
-        </div>
-        <div class="metric">
-          <div class="label">Sea-level Pressure</div>
-          <div class="big" id="pslpValue">—</div>
-          <div class="sub" id="pslpTrend">—</div>
-        </div>
-        <div class="metric">
-          <div class="label">RSSI</div>
-          <div class="big" id="rssiValue">—</div>
-        </div>
-      </div>
 
-      <div class="spark-wrap">
-        <div class="label">Temp trend</div>
-        <canvas id="spark" width="600" height="120"></canvas>
-      </div>
+        <div class="grid" aria-label="Latest metrics">
+            <div class="metric">
+                <div class="label">Temperature</div>
+                <div class="big" id="tempValue" aria-label="Temperature">—</div>
+            </div>
+
+            <div class="metric">
+                <div class="label">Humidity</div>
+                <div class="big" id="rhValue" aria-label="Humidity">—</div>
+            </div>
+
+            <div class="metric">
+                <div class="label">Sea-level Pressure</div>
+                <div class="big" id="pslpValue" aria-label="Sea-level pressure">—</div>
+                <div class="sub" id="pslpTrend" aria-label="Pressure trend">—</div>
+            </div>
+
+            <div class="metric">
+                <div class="label">RSSI</div>
+                <div class="big" id="rssiValue" aria-label="Signal strength">—</div>
+            </div>
+        </div>
+
+        <figure class="spark-wrap" aria-labelledby="sparkTitle">
+            <figcaption class="label" id="sparkTitle">Temp trend</figcaption>
+            <canvas id="spark" width="600" height="120" aria-label="Temperature sparkline"></canvas>
+        </figure>
     </section>
 
-    <section class="card">
-      <div class="card-header">
-        <div>
-          <div class="label">History</div>
-          <div class="value" id="rangeLabel">Last 3h</div>
+    <!-- History card -->
+    <section class="card" aria-labelledby="historyTitle">
+        <div class="card-header">
+            <div>
+                <div class="label" id="historyTitle">History</div>
+                <div class="value" id="rangeLabel">Last 3h</div>
+            </div>
+
+            <a id="csvLink" class="btn btn-secondary" href="#" download aria-label="Download CSV for selected range">
+                CSV
+            </a>
         </div>
-        <a id="csvLink" class="btn btn-secondary" href="#" download>CSV</a>
-      </div>
 
-      <div class="range">
-        <button class="chip is-active" data-range="1h" type="button">1h</button>
-        <button class="chip" data-range="3h" type="button">3h</button>
-        <button class="chip" data-range="6h" type="button">6h</button>
-        <button class="chip" data-range="12h" type="button">12h</button>
-        <button class="chip" data-range="24h" type="button">24h</button>
-        <button class="chip" data-range="7d" type="button">7d</button>
-      </div>
+        <div class="range" role="group" aria-label="History range">
+            <!-- app.js toggles .is-active -->
+            <button class="chip" data-range="1h" type="button">1h</button>
+            <button class="chip is-active" data-range="3h" type="button">3h</button>
+            <button class="chip" data-range="6h" type="button">6h</button>
+            <button class="chip" data-range="12h" type="button">12h</button>
+            <button class="chip" data-range="24h" type="button">24h</button>
+            <button class="chip" data-range="7d" type="button">7d</button>
+        </div>
 
-      <div class="table-wrap">
-        <table class="table" aria-label="Recent readings">
-          <thead>
-            <tr>
-              <th>Time</th>
-              <th>Temp</th>
-              <th>RH</th>
-              <th>SLP</th>
-            </tr>
-          </thead>
-          <tbody id="rows"></tbody>
-        </table>
-      </div>
+        <div class="table-wrap">
+            <table class="table" aria-label="Recent readings">
+                <thead>
+                <tr>
+                    <th scope="col">Time</th>
+                    <th scope="col">Temp</th>
+                    <th scope="col">RH</th>
+                    <th scope="col">SLP</th>
+                </tr>
+                </thead>
+                <tbody id="rows"></tbody>
+            </table>
+        </div>
     </section>
-  </main>
+</main>
 
-  <script src="/app.js"></script>
+<!-- Defer parsing so DOM is ready before app.js binds handlers -->
+<script src="/app.js" defer></script>
 </body>
 </html>
-
