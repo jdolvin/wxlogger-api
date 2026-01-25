@@ -661,6 +661,12 @@ async function refreshAll(state, els) {
   const label = state.range === "7d" ? "Last 7d" : `Last ${state.range.replace("h", "h")}`;
   els.rangeLabel.textContent = label;
 
+  // Keep the extremes card labels in sync with the selected range
+  const labelShort = label.toLowerCase();
+  document
+    .querySelectorAll("[data-extremes-range]")
+    .forEach((el) => (el.textContent = labelShort));
+
   await Promise.all([
     fetchLatest(state),
     fetchRange(state, els, from_ms, to_ms),
