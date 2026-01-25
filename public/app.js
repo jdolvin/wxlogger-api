@@ -512,7 +512,8 @@ function renderRange(state, els) {
   const rows = state.rangeRows || [];
   els.rowsTbody.innerHTML = "";
 
-  for (const r of rows) {
+  // Reverse once so newest appears on top
+  for (const r of rows.slice().reverse()) {
     const tr = document.createElement("tr");
 
     const tdT = document.createElement("td");
