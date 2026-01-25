@@ -432,7 +432,6 @@ function createWeatherDashboard() {
       {
         from_ms: String(from_ms),
         to_ms: String(to_ms),
-        limit: String(DEFAULTS.maxRangeLimit)
       },
       state.stationId
     );
@@ -471,45 +470,43 @@ function createWeatherDashboard() {
     els.pslpTrend.textContent = `${arrow} ${formatDeltaSigned(deltaInHg, 2)} inHg over ${state.range}`;
   }
 
-  function renderTable() {
-    let tableRenderToken = 0;
+  let tableRenderToken = 0;
 
-    async function renderTable() {
-      const myToken = ++tableRenderToken;
+  async function renderTable() {
+    const myToken = ++tableRenderToken;
 
-      els.rowsTbody.innerHTML = "";
+    els.rowsTbody.innerHTML = "";
 
-      // Rows are assumed oldest->newest. We want newest first for mobile.
-      const allRows = [...state.rangeRows].reverse();
+    // Rows are assumed oldest->newest. We want newest first for mobile.
+    const allRows = [...state.rangeRows].reverse();
 
-      if (allRows.length === 0) return;
+    if (allRows.length === 0) return;
 
-      const CHUNK_SIZE = 250; // iOS-friendly: keep UI responsive
+    const CHUNK_SIZE = 250; // iOS-friendly: keep UI responsive
 
-      for (let i = 0; i < allRows.length; i += CHUNK_SIZE) {
-        // If a new render started (range changed / refresh), abandon this one.
-        if (myToken !== tableRenderToken) return;
+    for (let i = 0; i < allRows.length; i += CHUNK_SIZE) {
+      // If a new render started (range changed / refresh), abandon this one.
+      if (myToken !== tableRenderToken) return;
 
-        const frag = document.createDocumentFragment();
-        const end = Math.min(i + CHUNK_SIZE, allRows.length);
+      const frag = document.createDocumentFragment();
+      const end = Math.min(i + CHUNK_SIZE, allRows.length);
 
-        for (let j = i; j < end; j++) {
-          const r = allRows[j];
-          const tr = document.createElement("tr");
-          tr.innerHTML = `
-          <td>${formatTime(r.ts_ms)}</td>
-          <td>${formatTemp(r.t_c, state.unit)}</td>
-          <td>${formatRh(r.rh)}</td>
-          <td>${formatPressure(r.p_slp_pa)}</td>
-        `;
-          frag.appendChild(tr);
-        }
-
-        els.rowsTbody.appendChild(frag);
-
-        // Yield so scrolling/taps stay responsive on iOS
-        await new Promise(requestAnimationFrame);
+      for (let j = i; j < end; j++) {
+        const r = allRows[j];
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+        <td>${formatTime(r.ts_ms)}</td>
+        <td>${formatTemp(r.t_c, state.unit)}</td>
+        <td>${formatRh(r.rh)}</td>
+        <td>${formatPressure(r.p_slp_pa)}</td>
+      `;
+        frag.appendChild(tr);
       }
+
+      els.rowsTbody.appendChild(frag);
+
+      // Yield so scrolling/taps stay responsive on iOS
+      await new Promise(requestAnimationFrame);
     }
   }
 
@@ -652,8 +649,7 @@ function createWeatherDashboard() {
     const params = withStation(
       {
         from_ms: String(from_ms),
-        to_ms: String(to_ms),
-        limit: String(DEFAULTS.maxRangeLimit)
+        to_ms: String(to_ms)
       },
       state.stationId
     );
