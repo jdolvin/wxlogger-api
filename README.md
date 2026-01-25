@@ -141,6 +141,7 @@ Planned additions include:
 - Long-term trend visualization
 - Alerting (rapid pressure drops, extreme temps)
 - Home Assistant integration
+- Battery backups for 8266 transmitter and receivers.
 
 ## 📜 License
 
