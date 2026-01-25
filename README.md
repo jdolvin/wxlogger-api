@@ -64,7 +64,7 @@ It exposes weather data in multiple formats for both humans and machines:
 
 - `GET /health`  
   System health and database connectivity check
-- 
+
 ---
 
 ## 📱 Frontend Web Dashboard
