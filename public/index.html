@@ -114,6 +114,21 @@
             <button class="chip" data-range="7d" type="button">7d</button>
         </div>
 
+        <!-- Range extremes (min/max temp for selected window) -->
+        <div class="grid extremes" aria-label="Range temperature extremes">
+            <div class="metric">
+                <div class="label">Min Temp (range)</div>
+                <div class="big" id="minTempValue" aria-label="Minimum temperature">—</div>
+                <div class="sub" id="minTempTime" aria-label="Time of minimum temperature">—</div>
+            </div>
+
+            <div class="metric">
+                <div class="label">Max Temp (range)</div>
+                <div class="big" id="maxTempValue" aria-label="Maximum temperature">—</div>
+                <div class="sub" id="maxTempTime" aria-label="Time of maximum temperature">—</div>
+            </div>
+        </div>
+
         <div class="table-wrap">
             <table class="table" aria-label="Recent readings">
                 <thead>

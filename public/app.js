@@ -4,11 +4,11 @@
  * Responsibilities:
  *  - Fetch and render "latest" station telemetry
  *  - Fetch and render "range" telemetry (table, sparkline, pressure trend)
+ *  - Fetch and render "extremes" (min/max temp within selected window)
  *  - Manage UI state (unit, range, station filter)
  *
  * Notes:
  *  - This is written as a single-file module for easy drop-in use.
- *  - If you move to a bundler, export `createWeatherDashboard()` and import it.
  */
 
 /** @typedef {"F"|"C"} Unit */
@@ -44,12 +44,28 @@
  */
 
 /**
+ * @typedef {Object} ExtremesPoint
+ * @property {number=} ts_ms
+ * @property {number=} t_c
+ */
+
+/**
+ * @typedef {Object} ExtremesPayload
+ * @property {number=} from_ms
+ * @property {number=} to_ms
+ * @property {string=} station_id
+ * @property {ExtremesPoint=} min
+ * @property {ExtremesPoint=} max
+ */
+
+/**
  * @typedef {Object} DashboardState
  * @property {Unit} unit
  * @property {RangeKey} range
  * @property {string|null} stationId
  * @property {LatestPayload|null} latest
  * @property {RangeRow[]} rangeRows
+ * @property {ExtremesPayload|null} extremes
  */
 
 /**
@@ -72,6 +88,10 @@
  * @property {HTMLElement} unitC
  * @property {HTMLElement} dewValue
  * @property {HTMLElement} feelValue
+ * @property {HTMLElement} minTempValue
+ * @property {HTMLElement} minTempTime
+ * @property {HTMLElement} maxTempValue
+ * @property {HTMLElement} maxTempTime
  */
 
 const RANGE_MS = /** @type {const} */ ({
@@ -180,201 +200,432 @@ function formatPressure(pa) {
 /** @param {unknown} rssi */
 function formatRssi(rssi) {
   if (!isFiniteNumber(rssi)) return "—";
-  return `${Number(rssi)} dBm`;
-}
-
-/** @param {unknown} ms */
-function formatTime(ms) {
-  if (!isFiniteNumber(ms) || Number(ms) <= 0) return "—";
-  return new Date(Number(ms)).toLocaleString();
-}
-
-/** @param {unknown} ms */
-function formatRelativeTime(ms) {
-  if (!isFiniteNumber(ms) || Number(ms) <= 0) return "—";
-  const diff = Date.now() - Number(ms);
-  const s = Math.floor(diff / 1000);
-  if (s < 60) return `${s}s ago`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 48) return `${h}h ago`;
-  return `${Math.floor(h / 24)}d ago`;
+  return `${Math.round(Number(rssi))} dBm`;
 }
 
 /**
- * Signed delta formatter (ex: +0.03, -0.12).
- * @param {unknown} x
- * @param {number} digits
+ * @param {number} tsMs
  */
-function formatDeltaSigned(x, digits = 2) {
-  if (!isFiniteNumber(x)) return "";
-  const v = Number(x);
-  const s = v > 0 ? "+" : "";
-  return `${s}${v.toFixed(digits)}`;
+function formatTimeLocal(tsMs) {
+  try {
+    const d = new Date(tsMs);
+    return d.toLocaleString(undefined, {
+      month: "short",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit"
+    });
+  } catch {
+    return "—";
+  }
 }
 
 /**
- * Compute delta between first/last finite values for a numeric field.
- * Expects rows in chronological order (oldest -> newest).
- *
- * @template {Record<string, any>} T
- * @param {T[]} rows
- * @param {keyof T} field
- * @returns {{first:number,last:number,delta:number}|null}
+ * Simple dewpoint (Magnus) approximation.
+ * @param {number} tC
+ * @param {number} rhPct
  */
-function computeTrend(rows, field) {
-  const vals = (rows || [])
-    .map(r => Number(r[field]))
-    .filter(v => Number.isFinite(v));
-
-  if (vals.length < 2) return null;
-
-  const first = vals[0];
-  const last = vals[vals.length - 1];
-  return {first, last, delta: last - first};
-}
-
-/**
- * Small helper for URL query building.
- * @param {Record<string, string>} baseParams
- * @param {string|null} stationId
- */
-function withStation(baseParams, stationId) {
-  const params = new URLSearchParams(baseParams);
-  if (stationId) params.set("station_id", stationId);
-  return params;
-}
-
-/**
- * Dew point in Celsius from temperature (C) and RH (%).
- * Magnus formula (good for typical ambient ranges).
- * @param {number} t_c
- * @param {number} rh
- */
-function dewPointC(t_c, rh) {
-  const T = Number(t_c);
-  const RH = Number(rh);
-  if (!Number.isFinite(T) || !Number.isFinite(RH) || RH <= 0 || RH > 100) return NaN;
-
-  const a = 17.27;
-  const b = 237.7;
-  const gamma = (a * T) / (b + T) + Math.log(RH / 100);
+function dewPointC(tC, rhPct) {
+  // Guard
+  const rh = Math.max(1e-6, Math.min(100, rhPct));
+  const a = 17.62;
+  const b = 243.12;
+  const gamma = (a * tC) / (b + tC) + Math.log(rh / 100);
   return (b * gamma) / (a - gamma);
 }
 
 /**
- * Feels-like (apparent temperature) in Celsius using Steadman-style approximation
- * with wind speed assumed ~0 (since we don't have wind).
- * @param {number} t_c
- * @param {number} rh
+ * Simple "feels like" approximation:
+ *  - If cold: wind chill requires wind; we don’t have it, so use actual.
+ *  - If warm: use a basic heat-index approximation when RH is present.
+ * @param {number} tC
+ * @param {number} rhPct
  */
-function feelsLikeC(t_c, rh) {
-  const T = Number(t_c);
-  const RH = Number(rh);
-  if (!Number.isFinite(T) || !Number.isFinite(RH) || RH <= 0 || RH > 100) return NaN;
+function feelsLikeC(tC, rhPct) {
+  // If RH missing, return actual
+  if (!isFiniteNumber(rhPct)) return tC;
 
-  // vapor pressure e (hPa)
-  const e = (RH / 100) * 6.105 * Math.exp((17.27 * T) / (237.7 + T));
-  // Apparent temperature (shade, light wind ~0 m/s)
-  return T + 0.33 * e - 4.0;
-}
+  // Simple heat-index-like curve for warm temps
+  const tF = cToF(tC);
+  if (tF < 80) return tC;
 
-/**
- * Heat index in Fahrenheit (NOAA regression). Returns NaN if out of range.
- * @param {number} t_f
- * @param {number} rh
- */
-function heatIndexF(t_f, rh) {
-  const T = Number(t_f);
-  const R = Number(rh);
-  if (!Number.isFinite(T) || !Number.isFinite(R)) return NaN;
-
-  // Only meaningful in warm/humid conditions
-  if (T < 80 || R < 40) return NaN;
-
+  // Rothfusz regression (approx), using F and RH
+  const R = Math.max(0, Math.min(100, rhPct));
   const HI =
     -42.379 +
-    2.04901523 * T +
+    2.04901523 * tF +
     10.14333127 * R -
-    0.22475541 * T * R -
-    0.00683783 * T * T -
+    0.22475541 * tF * R -
+    0.00683783 * tF * tF -
     0.05481717 * R * R +
-    0.00122874 * T * T * R +
-    0.00085282 * T * R * R -
-    0.00000199 * T * T * R * R;
+    0.00122874 * tF * tF * R +
+    0.00085282 * tF * R * R -
+    0.00000199 * tF * tF * R * R;
 
-  return HI;
+  // Back to C
+  return (HI - 32) * (5 / 9);
 }
 
 /**
- * @param {unknown} t_c
- * @param {unknown} rh
- * @param {Unit} unit
- */
-function formatDewPoint(t_c, rh, unit) {
-  if (!isFiniteNumber(t_c) || !isFiniteNumber(rh)) return "—";
-  const dpC = dewPointC(Number(t_c), Number(rh));
-  if (!Number.isFinite(dpC)) return "—";
-  const v = unit === "F" ? cToF(dpC) : dpC;
-  return `${v.toFixed(1)}°${unit}`;
-}
-
-/**
- * @param {unknown} t_c
- * @param {unknown} rh
- * @param {Unit} unit
- */
-function formatFeelsLike(t_c, rh, unit) {
-  if (!isFiniteNumber(t_c) || !isFiniteNumber(rh)) return "—";
-
-  const T_c = Number(t_c);
-  const RH = Number(rh);
-
-  // Prefer heat index when truly hot/humid (more intuitive for users)
-  const T_f = cToF(T_c);
-  const hiF = heatIndexF(T_f, RH);
-
-  let outC;
-  if (Number.isFinite(hiF)) {
-    outC = (hiF - 32) * 5 / 9; // convert heat index back to C for unified unit handling
-  } else {
-    outC = feelsLikeC(T_c, RH);
-  }
-
-  if (!Number.isFinite(outC)) return "—";
-  const v = unit === "F" ? cToF(outC) : outC;
-  return `${v.toFixed(1)}°${unit}`;
-}
-
-/**
- * Fetch JSON with an iOS-friendly timeout and no-store caching.
- * @template T
+ * fetch wrapper with timeout and JSON parsing
  * @param {string} url
  * @param {number} timeoutMs
- * @returns {Promise<T>}
  */
 async function fetchJson(url, timeoutMs) {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), timeoutMs);
-
   try {
-    const res = await fetch(url, {signal: ctrl.signal, cache: "no-store"});
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      throw new Error(`HTTP ${res.status} ${res.statusText}${text ? ` — ${text}` : ""}`);
+    const r = await fetch(url, {signal: ctrl.signal});
+    const text = await r.text();
+    const data = text ? JSON.parse(text) : null;
+
+    if (!r.ok) {
+      const msg = (data && data.error) ? data.error : `${r.status} ${r.statusText}`;
+      throw new Error(msg);
     }
-    return /** @type {Promise<T>} */ (res.json());
+    return data;
   } finally {
     clearTimeout(t);
   }
 }
 
 /**
- * Create and start the dashboard runtime.
- * Keep this as a single entrypoint to make future extraction to a module trivial.
+ * Draw a simple sparkline.
+ * @param {HTMLCanvasElement} canvas
+ * @param {number[]} ys
  */
-function createWeatherDashboard() {
+function drawSpark(canvas, ys) {
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+
+  const w = canvas.width;
+  const h = canvas.height;
+
+  // Clear
+  ctx.clearRect(0, 0, w, h);
+
+  if (!ys.length) return;
+
+  const min = Math.min(...ys);
+  const max = Math.max(...ys);
+  const span = Math.max(1e-9, max - min);
+
+  const pad = 8;
+  const x0 = pad;
+  const x1 = w - pad;
+  const y0 = pad;
+  const y1 = h - pad;
+
+  ctx.beginPath();
+  ys.forEach((v, i) => {
+    const t = ys.length === 1 ? 0 : i / (ys.length - 1);
+    const x = x0 + t * (x1 - x0);
+    const y = y1 - ((v - min) / span) * (y1 - y0);
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = "rgba(232,234,240,0.9)";
+  ctx.stroke();
+}
+
+/**
+ * Set error banner message (and show/hide).
+ * @param {DashboardEls} els
+ * @param {string|null} msg
+ */
+function setError(els, msg) {
+  if (!msg) {
+    els.errorBox.classList.add("hidden");
+    els.errorBox.textContent = "";
+    return;
+  }
+  els.errorBox.textContent = msg;
+  els.errorBox.classList.remove("hidden");
+}
+
+/**
+ * Compute range window in ms from now.
+ * @param {RangeKey} key
+ */
+function computeWindow(key) {
+  const now = Date.now();
+  const dur = RANGE_MS[key] ?? RANGE_MS["3h"];
+  return {from_ms: now - dur, to_ms: now};
+}
+
+/**
+ * Build query params for range/extremes endpoints.
+ * @param {DashboardState} state
+ * @param {number} fromMs
+ * @param {number} toMs
+ */
+function buildRangeParams(state, fromMs, toMs) {
+  const params = new URLSearchParams();
+  params.set("from_ms", String(fromMs));
+  params.set("to_ms", String(toMs));
+  params.set("limit", String(DEFAULTS.maxRangeLimit));
+  if (state.stationId) params.set("station_id", state.stationId);
+  return params;
+}
+
+/**
+ * Bind range chip click handlers.
+ * @param {DashboardState} state
+ * @param {DashboardEls} els
+ */
+function bindRangeChips(state, els) {
+  const chips = Array.from(document.querySelectorAll(".chip"));
+  chips.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      chips.forEach((b) => b.classList.remove("is-active"));
+      btn.classList.add("is-active");
+      const key = /** @type {RangeKey} */ (btn.getAttribute("data-range") || "3h");
+      state.range = key;
+      refreshAll(state, els).catch(() => {});
+    });
+  });
+}
+
+/**
+ * Bind unit toggle buttons.
+ * @param {DashboardState} state
+ * @param {DashboardEls} els
+ */
+function bindUnitToggle(state, els) {
+  function setUnit(u) {
+    state.unit = u;
+    els.unitF.classList.toggle("is-active", u === "F");
+    els.unitC.classList.toggle("is-active", u === "C");
+    els.unitF.setAttribute("aria-pressed", String(u === "F"));
+    els.unitC.setAttribute("aria-pressed", String(u === "C"));
+    renderAll(state, els);
+  }
+
+  els.unitF.addEventListener("click", () => setUnit("F"));
+  els.unitC.addEventListener("click", () => setUnit("C"));
+}
+
+/**
+ * Back-to-top button.
+ * @param {DashboardEls} els
+ */
+function bindBackToTop(els) {
+  const btn = els.backToTop;
+  btn.addEventListener("click", () => window.scrollTo({top: 0, behavior: "smooth"}));
+
+  window.addEventListener("scroll", () => {
+    const show = window.scrollY > 600;
+    btn.classList.toggle("is-visible", show);
+  }, {passive: true});
+}
+
+/**
+ * Render latest card.
+ * @param {DashboardState} state
+ * @param {DashboardEls} els
+ */
+function renderLatest(state, els) {
+  const payload = state.latest;
+  if (!payload || !payload.metrics) return;
+
+  const m = payload.metrics;
+  els.latestTime.textContent = payload.ts_ms ? formatTimeLocal(payload.ts_ms) : "—";
+  els.tempValue.textContent = formatTemp(m.t_c, state.unit);
+  els.rhValue.textContent = formatRh(m.rh);
+  els.pslpValue.textContent = formatPressure(m.p_slp_pa);
+  els.rssiValue.textContent = formatRssi(m.rssi_dbm);
+
+  // Dew + feels-like (best-effort)
+  if (isFiniteNumber(m.t_c) && isFiniteNumber(m.rh)) {
+    const dp = dewPointC(Number(m.t_c), Number(m.rh));
+    const fl = feelsLikeC(Number(m.t_c), Number(m.rh));
+    els.dewValue.textContent = formatTemp(dp, state.unit);
+    els.feelValue.textContent = formatTemp(fl, state.unit);
+  } else {
+    els.dewValue.textContent = "—";
+    els.feelValue.textContent = "—";
+  }
+
+  // Subtitle
+  const station = payload.station_id || (state.stationId ?? "—");
+  const rel = payload.ts_ms && payload.ts_recv_ms ? `${Math.round((payload.ts_recv_ms - payload.ts_ms) / 1000)}s lag` : "—";
+  const abs = payload.ts_ms ? new Date(payload.ts_ms).toLocaleString() : "—";
+  els.subtitle.textContent = `${station} • ${rel} • ${abs}`;
+}
+
+/**
+ * Render range table + sparkline + pressure trend.
+ * @param {DashboardState} state
+ * @param {DashboardEls} els
+ */
+function renderRange(state, els) {
+  const rows = state.rangeRows || [];
+  els.rowsTbody.innerHTML = "";
+
+  const limited = rows.slice(-DEFAULTS.maxTableRows);
+
+  for (const r of limited) {
+    const tr = document.createElement("tr");
+
+    const tdT = document.createElement("td");
+    tdT.textContent = r.ts_ms ? new Date(r.ts_ms).toLocaleTimeString(undefined, {
+      hour: "2-digit",
+      minute: "2-digit"
+    }) : "—";
+
+    const tdTemp = document.createElement("td");
+    tdTemp.textContent = formatTemp(r.t_c, state.unit);
+
+    const tdRh = document.createElement("td");
+    tdRh.textContent = formatRh(r.rh);
+
+    const tdP = document.createElement("td");
+    tdP.textContent = formatPressure(r.p_slp_pa);
+
+    tr.appendChild(tdT);
+    tr.appendChild(tdTemp);
+    tr.appendChild(tdRh);
+    tr.appendChild(tdP);
+    els.rowsTbody.appendChild(tr);
+  }
+
+  // Sparkline from temp
+  const temps = rows
+    .map((x) => (isFiniteNumber(x.t_c) ? Number(x.t_c) : null))
+    .filter((x) => x !== null);
+
+  // Convert to selected unit for visual consistency
+  const ys = state.unit === "F" ? temps.map((c) => cToF(c)) : temps;
+  drawSpark(els.spark, ys);
+
+  // Pressure trend: compare first and last valid
+  const ps = rows.map((x) => (isFiniteNumber(x.p_slp_pa) ? Number(x.p_slp_pa) : null)).filter((x) => x !== null);
+  if (ps.length >= 2) {
+    const delta = paToInHg(ps[ps.length - 1] - ps[0]);
+    const dir = delta > 0.001 ? "Rising" : delta < -0.001 ? "Falling" : "Steady";
+    els.pslpTrend.textContent = `${dir} (${delta >= 0 ? "+" : ""}${delta.toFixed(2)} inHg)`;
+  } else {
+    els.pslpTrend.textContent = "—";
+  }
+}
+
+/**
+ * Render range extremes (min/max temp within selected window).
+ * @param {DashboardState} state
+ * @param {DashboardEls} els
+ */
+function renderExtremes(state, els) {
+  const ex = state.extremes;
+
+  if (!ex || !ex.min || !ex.max) {
+    els.minTempValue.textContent = "—";
+    els.minTempTime.textContent = "—";
+    els.maxTempValue.textContent = "—";
+    els.maxTempTime.textContent = "—";
+    return;
+  }
+
+  els.minTempValue.textContent = formatTemp(ex.min.t_c, state.unit);
+  els.minTempTime.textContent = ex.min.ts_ms ? formatTimeLocal(ex.min.ts_ms) : "—";
+
+  els.maxTempValue.textContent = formatTemp(ex.max.t_c, state.unit);
+  els.maxTempTime.textContent = ex.max.ts_ms ? formatTimeLocal(ex.max.ts_ms) : "—";
+}
+
+/**
+ * Render all UI pieces.
+ * @param {DashboardState} state
+ * @param {DashboardEls} els
+ */
+function renderAll(state, els) {
+  renderLatest(state, els);
+  renderRange(state, els);
+  renderExtremes(state, els);
+}
+
+/**
+ * Fetch latest.
+ * @param {DashboardState} state
+ */
+async function fetchLatest(state) {
+  const params = new URLSearchParams();
+  if (state.stationId) params.set("station_id", state.stationId);
+  const url = `/api/weather/latest?${params.toString()}`;
+  const data = await fetchJson(url, DEFAULTS.requestTimeoutMs);
+  state.latest = /** @type {LatestPayload} */ (data);
+}
+
+/**
+ * Fetch range + set CSV link.
+ * @param {DashboardState} state
+ * @param {DashboardEls} els
+ * @param {number} fromMs
+ * @param {number} toMs
+ */
+async function fetchRange(state, els, fromMs, toMs) {
+  const params = buildRangeParams(state, fromMs, toMs);
+
+  const url = `/api/weather/range?${params.toString()}`;
+  const data = await fetchJson(url, DEFAULTS.requestTimeoutMs);
+
+  const payload = /** @type {RangePayload} */ (data);
+  state.rangeRows = Array.isArray(payload?.rows) ? payload.rows : [];
+
+  // CSV link mirrors the same range window (and station_id) but uses /api/weather.csv
+  const csvParams = new URLSearchParams(params);
+  els.csvLink.href = `/api/weather.csv?${csvParams.toString()}`;
+}
+
+/**
+ * Fetch extremes for the same window as range.
+ * Non-fatal if it fails.
+ * @param {DashboardState} state
+ * @param {number} fromMs
+ * @param {number} toMs
+ */
+async function fetchExtremes(state, fromMs, toMs) {
+  try {
+    const params = new URLSearchParams();
+    params.set("from_ms", String(fromMs));
+    params.set("to_ms", String(toMs));
+    if (state.stationId) params.set("station_id", state.stationId);
+
+    const data = await fetchJson(`/api/weather/extremes?${params.toString()}`, DEFAULTS.requestTimeoutMs);
+    state.extremes = /** @type {ExtremesPayload} */ (data);
+  } catch {
+    state.extremes = null;
+  }
+}
+
+/**
+ * Refresh latest + range (+ extremes) in one shot.
+ * @param {DashboardState} state
+ * @param {DashboardEls} els
+ */
+async function refreshAll(state, els) {
+  setError(els, null);
+
+  const {from_ms, to_ms} = computeWindow(state.range);
+
+  // Label
+  const label = state.range === "7d" ? "Last 7d" : `Last ${state.range.replace("h", "h")}`;
+  els.rangeLabel.textContent = label;
+
+  await Promise.all([
+    fetchLatest(state),
+    fetchRange(state, els, from_ms, to_ms),
+    fetchExtremes(state, from_ms, to_ms)
+  ]);
+
+  renderAll(state, els);
+}
+
+/**
+ * Startup
+ */
+function main() {
   /** @type {DashboardEls} */
   const els = {
     errorBox: getEl("errorBox"),
@@ -394,7 +645,11 @@ function createWeatherDashboard() {
     unitF: getEl("unitF"),
     unitC: getEl("unitC"),
     dewValue: getEl("dewValue"),
-    feelValue: getEl("feelValue")
+    feelValue: getEl("feelValue"),
+    minTempValue: getEl("minTempValue"),
+    minTempTime: getEl("minTempTime"),
+    maxTempValue: getEl("maxTempValue"),
+    maxTempTime: getEl("maxTempTime"),
   };
 
   /** @type {DashboardState} */
@@ -403,346 +658,30 @@ function createWeatherDashboard() {
     range: DEFAULTS.range,
     stationId: null,
     latest: null,
-    rangeRows: []
+    rangeRows: [],
+    extremes: null
   };
 
-  /**
-   * Error rendering should never throw.
-   * @param {string} msg
-   */
-  function setError(msg) {
-    if (!msg) {
-      els.errorBox.classList.add("hidden");
-      els.errorBox.textContent = "";
-      return;
-    }
-    els.errorBox.textContent = msg;
-    els.errorBox.classList.remove("hidden");
-  }
+  bindRangeChips(state, els);
+  bindUnitToggle(state, els);
+  bindBackToTop(els);
 
-  function getRangeWindowMs() {
-    const now = Date.now();
-    const span = RANGE_MS[state.range] ?? RANGE_MS[DEFAULTS.range];
-    return {from_ms: now - span, to_ms: now};
-  }
+  els.refreshBtn.addEventListener("click", () => {
+    refreshAll(state, els).catch((e) => setError(els, `Refresh failed: ${e?.message || e}`));
+  });
 
-  function updateCsvLink() {
-    const {from_ms, to_ms} = getRangeWindowMs();
-    const params = withStation(
-      {
-        from_ms: String(from_ms),
-        to_ms: String(to_ms),
-      },
-      state.stationId
-    );
-    els.csvLink.href = `/api/weather.csv?${params.toString()}`;
-  }
+  // Initial load
+  refreshAll(state, els).catch((e) => setError(els, `Init failed: ${e?.message || e}`));
 
-  function renderLatest() {
-    const l = state.latest;
-    if (!l) return;
-
-    els.subtitle.textContent = `${l.station_id || "—"} • ${formatRelativeTime(l.ts_ms)} • ${formatTime(l.ts_ms)}`;
-    els.latestTime.textContent = `Event: ${formatTime(l.ts_ms)} • Recv: ${formatTime(l.ts_recv_ms)}`;
-    els.tempValue.textContent = formatTemp(l.metrics?.t_c, state.unit);
-    els.rhValue.textContent = formatRh(l.metrics?.rh);
-    els.pslpValue.textContent = formatPressure(l.metrics?.p_slp_pa);
-    els.rssiValue.textContent = formatRssi(l.metrics?.rssi_dbm);
-    els.dewValue.textContent = formatDewPoint(l.metrics?.t_c, l.metrics?.rh, state.unit);
-    els.feelValue.textContent = formatFeelsLike(l.metrics?.t_c, l.metrics?.rh, state.unit);
-  }
-
-  function renderPressureTrend() {
-    const rows = state.rangeRows;
-    const t = computeTrend(rows, "p_slp_pa");
-    if (!t) {
-      els.pslpTrend.textContent = "—";
-      return;
-    }
-
-    const deltaInHg = paToInHg(t.delta);
-
-    // Threshold to avoid noise-driven arrow flipping
-    let arrow = "→";
-    if (deltaInHg > 0.01) arrow = "↑";
-    else if (deltaInHg < -0.01) arrow = "↓";
-
-    els.pslpTrend.textContent = `${arrow} ${formatDeltaSigned(deltaInHg, 2)} inHg over ${state.range}`;
-  }
-
-  let tableRenderToken = 0;
-
-  async function renderTable() {
-    const myToken = ++tableRenderToken;
-
-    els.rowsTbody.innerHTML = "";
-
-    // Rows are assumed oldest->newest. We want newest first for mobile.
-    const allRows = [...state.rangeRows].reverse();
-
-    if (allRows.length === 0) return;
-
-    const CHUNK_SIZE = 250; // iOS-friendly: keep UI responsive
-
-    for (let i = 0; i < allRows.length; i += CHUNK_SIZE) {
-      // If a new render started (range changed / refresh), abandon this one.
-      if (myToken !== tableRenderToken) return;
-
-      const frag = document.createDocumentFragment();
-      const end = Math.min(i + CHUNK_SIZE, allRows.length);
-
-      for (let j = i; j < end; j++) {
-        const r = allRows[j];
-        const tr = document.createElement("tr");
-        tr.innerHTML = `
-        <td>${formatTime(r.ts_ms)}</td>
-        <td>${formatTemp(r.t_c, state.unit)}</td>
-        <td>${formatRh(r.rh)}</td>
-        <td>${formatPressure(r.p_slp_pa)}</td>
-      `;
-        frag.appendChild(tr);
-      }
-
-      els.rowsTbody.appendChild(frag);
-
-      // Yield so scrolling/taps stay responsive on iOS
-      await new Promise(requestAnimationFrame);
-    }
-  }
-
-  function renderSparkline() {
-    const canvas = els.spark;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-
-    const rows = state.rangeRows;
-
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    if (rows.length < 2) {
-      ctx.globalAlpha = 0.7;
-      ctx.beginPath();
-      ctx.moveTo(12, canvas.height / 2);
-      ctx.lineTo(canvas.width - 12, canvas.height / 2);
-      ctx.stroke();
-      ctx.globalAlpha = 1;
-      return;
-    }
-
-    // Use t_c
-    const valuesC = rows.map(r => Number(r.t_c)).filter(v => Number.isFinite(v));
-    if (valuesC.length < 2) return;
-
-    const values = valuesC.map(v => (state.unit === "F" ? cToF(v) : v));
-
-    let min = Math.min(...values);
-    let max = Math.max(...values);
-    if (min === max) {
-      min -= 1;
-      max += 1;
-    }
-
-    const padX = 12,
-      padY = 14;
-    const W = canvas.width - padX * 2;
-    const H = canvas.height - padY * 2;
-
-    // Grid baseline
-    ctx.globalAlpha = 0.35;
-    ctx.beginPath();
-    ctx.moveTo(padX, padY + H);
-    ctx.lineTo(padX + W, padY + H);
-    ctx.stroke();
-    ctx.globalAlpha = 1;
-
-    // Fill gradient
-    const grad = ctx.createLinearGradient(0, padY, 0, padY + H);
-    grad.addColorStop(0, "rgba(0, 200, 255, 0.6)");
-    grad.addColorStop(1, "rgba(0, 200, 255, 0.05)");
-
-    // Area path
-    ctx.beginPath();
-    values.forEach((v, i) => {
-      const x = padX + (i / (values.length - 1)) * W;
-      const y = padY + (1 - (v - min) / (max - min)) * H;
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    });
-    ctx.lineTo(padX + W, padY + H);
-    ctx.lineTo(padX, padY + H);
-    ctx.closePath();
-
-    ctx.fillStyle = grad;
-    ctx.fill();
-
-    // Outline
-    ctx.beginPath();
-    values.forEach((v, i) => {
-      const x = padX + (i / (values.length - 1)) * W;
-      const y = padY + (1 - (v - min) / (max - min)) * H;
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    });
-
-    ctx.strokeStyle = "#00d4ff";
-    ctx.lineWidth = 2.5;
-    ctx.stroke();
-
-    // Labels (min/max)
-    ctx.globalAlpha = 0.7;
-    ctx.font = "12px system-ui, -apple-system, Segoe UI, Roboto, Arial";
-    ctx.fillText(`${max.toFixed(1)}°${state.unit}`, padX, 12);
-    ctx.fillText(`${min.toFixed(1)}°${state.unit}`, padX, canvas.height - 6);
-    ctx.globalAlpha = 1;
-  }
-
-  function renderAll() {
-    renderLatest();
-    void renderTable();
-    renderSparkline();
-    renderPressureTrend();
-    updateCsvLink();
-  }
-
-  /** @param {Unit} unit */
-  function setUnit(unit) {
-    state.unit = unit;
-    els.unitF.classList.toggle("is-active", unit === "F");
-    els.unitC.classList.toggle("is-active", unit === "C");
-    renderAll();
-  }
-
-  /** @param {RangeKey} range */
-  function setRange(range) {
-    state.range = range;
-    els.rangeLabel.textContent = `Last ${range}`;
-
-    document.querySelectorAll(".chip").forEach(btn => {
-      const b = /** @type {HTMLElement} */ (btn);
-      b.classList.toggle("is-active", b.dataset.range === range);
-    });
-
-    updateCsvLink();
-    void refreshRange(); // deliberate fire-and-forget (errors handled internally)
-  }
-
-  async function refreshLatest() {
-    setError("");
-    const params = withStation({}, state.stationId);
-
+  // Poll latest periodically (keep it lightweight: just latest + redraw the latest card)
+  setInterval(async () => {
     try {
-      const data = await fetchJson(
-        `/api/weather/latest?${params.toString()}`,
-        DEFAULTS.requestTimeoutMs
-      );
-      state.latest = /** @type {LatestPayload} */ (data);
-      renderLatest();
-    } catch (e) {
-      setError(`Latest failed: ${e instanceof Error ? e.message : String(e)}`);
+      await fetchLatest(state);
+      renderLatest(state, els);
+    } catch {
+      // silent; do not annoy with flapping errors
     }
-  }
-
-  async function refreshRange() {
-    setError("");
-    const {from_ms, to_ms} = getRangeWindowMs();
-
-    const params = withStation(
-      {
-        from_ms: String(from_ms),
-        to_ms: String(to_ms)
-      },
-      state.stationId
-    );
-
-    try {
-      const data = await fetchJson(
-        `/api/weather/range?${params.toString()}`,
-        DEFAULTS.requestTimeoutMs
-      );
-      const payload = /** @type {RangePayload} */ (data);
-      state.rangeRows = payload.rows || [];
-      void renderTable();
-      renderSparkline();
-      renderPressureTrend();
-    } catch (e) {
-      setError(`Range failed: ${e instanceof Error ? e.message : String(e)}`);
-    }
-  }
-
-  const BACK_TO_TOP_SCROLL_Y = 600;
-
-  function setBackToTopVisible(on) {
-    els.backToTop.classList.toggle("is-visible", !!on);
-  }
-
-  function onScroll() {
-    setBackToTopVisible(window.scrollY > BACK_TO_TOP_SCROLL_Y);
-  }
-
-  function wireUI() {
-    els.refreshBtn.addEventListener("click", async () => {
-      await refreshLatest();
-      await refreshRange();
-    });
-
-    els.unitF.addEventListener("click", () => setUnit("F"));
-    els.unitC.addEventListener("click", () => setUnit("C"));
-
-    document.querySelectorAll(".chip").forEach(btn => {
-      btn.addEventListener("click", () => {
-        const range = /** @type {RangeKey} */ (/** @type {HTMLElement} */ (btn).dataset.range);
-        setRange(range);
-      });
-    });
-
-    els.backToTop.addEventListener("click", () => {
-      window.scrollTo({top: 0, behavior: "smooth"});
-    });
-
-    window.addEventListener("scroll", onScroll, {passive: true});
-    onScroll(); // set initial visibility
-  }
-
-  let latestTimer = /** @type {number|undefined} */ (undefined);
-
-  async function start() {
-    wireUI();
-    setUnit(DEFAULTS.unit);
-    setRange(DEFAULTS.range);
-
-    // Initial load
-    await refreshLatest();
-    await refreshRange();
-
-    // Gentle polling for “latest” (internal LAN, iOS-friendly)
-    latestTimer = window.setInterval(() => {
-      void refreshLatest();
-    }, DEFAULTS.latestPollMs);
-  }
-
-  function stop() {
-    if (latestTimer) window.clearInterval(latestTimer);
-    latestTimer = undefined;
-    window.removeEventListener("scroll", onScroll);
-  }
-
-  return {
-    start,
-    stop,
-
-    // Future expansion points (station selector UI, etc.)
-    /** @param {string|null} stationId */
-    setStationId(stationId) {
-      state.stationId = stationId;
-      updateCsvLink();
-      void refreshLatest();
-      void refreshRange();
-    }
-  };
+  }, DEFAULTS.latestPollMs);
 }
 
-// Boot
-(() => {
-  const dashboard = createWeatherDashboard();
-  void dashboard.start();
-})();
+document.addEventListener("DOMContentLoaded", main);

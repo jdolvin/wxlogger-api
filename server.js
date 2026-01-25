@@ -202,6 +202,71 @@ app.get("/api/weather/latest", (req, res) => {
   });
 });
 
+app.get("/api/weather/extremes", (req, res) => {
+  const stationId = getStationId(req);
+  const { from_ms, to_ms } = getRangeWindowMs(req);
+
+  const baseWhere = "ts_ms BETWEEN ? AND ? " + (stationId ? "AND station_id = ? " : "");
+  const baseParams = stationId ? [from_ms, to_ms, stationId] : [from_ms, to_ms];
+
+  const sql = `
+WITH filtered AS (
+  SELECT ts_ms, station_id, t_c
+  FROM telemetry_raw
+  WHERE ${baseWhere} AND t_c IS NOT NULL
+),
+minrow AS (
+  SELECT ts_ms, t_c
+  FROM filtered
+  ORDER BY t_c ASC, ts_ms ASC
+  LIMIT 1
+),
+maxrow AS (
+  SELECT ts_ms, t_c
+  FROM filtered
+  ORDER BY t_c DESC, ts_ms ASC
+  LIMIT 1
+),
+counts AS (
+  SELECT
+    (SELECT COUNT(*) FROM telemetry_raw WHERE ${baseWhere}) AS rows_in_range,
+    (SELECT COUNT(*) FROM filtered) AS rows_with_temp
+)
+SELECT
+  (SELECT ts_ms FROM minrow) AS min_ts_ms,
+  (SELECT t_c   FROM minrow) AS min_t_c,
+  (SELECT ts_ms FROM maxrow) AS max_ts_ms,
+  (SELECT t_c   FROM maxrow) AS max_t_c,
+  (SELECT rows_in_range FROM counts) AS rows_in_range,
+  (SELECT rows_with_temp FROM counts) AS rows_with_temp
+;`;
+
+  // baseWhere is used twice (telemetry_raw count + filtered CTE input)
+  const params = [...baseParams, ...baseParams];
+
+  db.get(sql, params, (err, row) => {
+    if (err) return sendDbJsonError(res, err);
+
+    if (!row || row.rows_with_temp === 0 || row.min_t_c === null || row.max_t_c === null) {
+      return res.status(404).json({
+        error: "No temperature data in the selected range.",
+        from_ms,
+        to_ms,
+        station_id: stationId,
+      });
+    }
+
+    res.json({
+      from_ms,
+      to_ms,
+      station_id: stationId,
+      min: { ts_ms: row.min_ts_ms, t_c: row.min_t_c },
+      max: { ts_ms: row.max_ts_ms, t_c: row.max_t_c },
+      counts: { rows_in_range: row.rows_in_range, rows_with_temp: row.rows_with_temp },
+    });
+  });
+});
+
 // -----------------------------
 // Startup
 // -----------------------------
