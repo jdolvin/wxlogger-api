@@ -290,7 +290,11 @@ async function fetchJson(url, timeoutMs) {
 }
 
 /**
- * Draw a simple sparkline.
+ * Draw sparkline in the original style: blue line + blue shaded fill.
+ * Matches the old renderSparkline() look:
+ *   fill: rgba(0, 200, 255, 0.6) -> rgba(0, 200, 255, 0.05)
+ *   stroke: #00d4ff, width 2.5
+ *
  * @param {HTMLCanvasElement} canvas
  * @param {number[]} ys
  */
@@ -301,33 +305,77 @@ function drawSpark(canvas, ys) {
   const w = canvas.width;
   const h = canvas.height;
 
-  // Clear
   ctx.clearRect(0, 0, w, h);
 
-  if (!ys.length) return;
+  // Old behavior: draw a simple midline if we can't form a curve
+  if (!ys || ys.length < 2) {
+    ctx.globalAlpha = 0.7;
+    ctx.beginPath();
+    ctx.moveTo(12, h / 2);
+    ctx.lineTo(w - 12, h / 2);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    return;
+  }
 
   const min = Math.min(...ys);
   const max = Math.max(...ys);
+
+  // Avoid divide-by-zero if flat
   const span = Math.max(1e-9, max - min);
 
-  const pad = 8;
-  const x0 = pad;
-  const x1 = w - pad;
-  const y0 = pad;
-  const y1 = h - pad;
+  const padX = 12;
+  const padY = 14;
+  const x0 = padX;
+  const x1 = w - padX;
+  const y0 = padY;
+  const y1 = h - padY;
+  const W = x1 - x0;
+  const H = y1 - y0;
 
+  // Baseline (same vibe as old function)
+  ctx.globalAlpha = 0.35;
   ctx.beginPath();
-  ys.forEach((v, i) => {
-    const t = ys.length === 1 ? 0 : i / (ys.length - 1);
-    const x = x0 + t * (x1 - x0);
-    const y = y1 - ((v - min) / span) * (y1 - y0);
-    if (i === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
+  ctx.moveTo(x0, y1);
+  ctx.lineTo(x1, y1);
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+
+  // Precompute points
+  const pts = ys.map((v, i) => {
+    const t = i / (ys.length - 1);
+    const x = x0 + t * W;
+    const y = y1 - ((v - min) / span) * H;
+    return { x, y };
   });
 
-  ctx.lineWidth = 2;
-  ctx.strokeStyle = "rgba(232,234,240,0.9)";
+  // Fill gradient (exact old colors)
+  const grad = ctx.createLinearGradient(0, y0, 0, y1);
+  grad.addColorStop(0, "rgba(0, 200, 255, 0.6)");
+  grad.addColorStop(1, "rgba(0, 200, 255, 0.05)");
+
+  // Area path
+  ctx.beginPath();
+  pts.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+  ctx.lineTo(pts[pts.length - 1].x, y1);
+  ctx.lineTo(pts[0].x, y1);
+  ctx.closePath();
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // Outline (exact old stroke)
+  ctx.beginPath();
+  pts.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+  ctx.strokeStyle = "#00d4ff";
+  ctx.lineWidth = 2.5;
   ctx.stroke();
+
+  // Optional labels (matches old behavior; harmless if you prefer them)
+  ctx.globalAlpha = 0.7;
+  ctx.font = "12px system-ui, -apple-system, Segoe UI, Roboto, Arial";
+  ctx.fillText(`${max.toFixed(1)}`, x0, 12);
+  ctx.fillText(`${min.toFixed(1)}`, x0, h - 6);
+  ctx.globalAlpha = 1;
 }
 
 /**
