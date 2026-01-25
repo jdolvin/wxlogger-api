@@ -65,6 +65,7 @@
  * @property {HTMLAnchorElement} csvLink
  * @property {HTMLTableSectionElement} rowsTbody
  * @property {HTMLCanvasElement} spark
+ * @property {HTMLButtonElement} backToTop
  * @property {HTMLElement} pslpTrend
  * @property {HTMLButtonElement} refreshBtn
  * @property {HTMLElement} unitF
@@ -231,7 +232,7 @@ function computeTrend(rows, field) {
 
   const first = vals[0];
   const last = vals[vals.length - 1];
-  return { first, last, delta: last - first };
+  return {first, last, delta: last - first};
 }
 
 /**
@@ -358,7 +359,7 @@ async function fetchJson(url, timeoutMs) {
   const t = setTimeout(() => ctrl.abort(), timeoutMs);
 
   try {
-    const res = await fetch(url, { signal: ctrl.signal, cache: "no-store" });
+    const res = await fetch(url, {signal: ctrl.signal, cache: "no-store"});
     if (!res.ok) {
       const text = await res.text().catch(() => "");
       throw new Error(`HTTP ${res.status} ${res.statusText}${text ? ` — ${text}` : ""}`);
@@ -387,6 +388,7 @@ function createWeatherDashboard() {
     csvLink: getAnchor("csvLink"),
     rowsTbody: getTbody("rows"),
     spark: getCanvas("spark"),
+    backToTop: /** @type {HTMLButtonElement} */ (getEl("backToTop")),
     pslpTrend: getEl("pslpTrend"),
     refreshBtn: /** @type {HTMLButtonElement} */ (getEl("refreshBtn")),
     unitF: getEl("unitF"),
@@ -421,11 +423,11 @@ function createWeatherDashboard() {
   function getRangeWindowMs() {
     const now = Date.now();
     const span = RANGE_MS[state.range] ?? RANGE_MS[DEFAULTS.range];
-    return { from_ms: now - span, to_ms: now };
+    return {from_ms: now - span, to_ms: now};
   }
 
   function updateCsvLink() {
-    const { from_ms, to_ms } = getRangeWindowMs();
+    const {from_ms, to_ms} = getRangeWindowMs();
     const params = withStation(
       {
         from_ms: String(from_ms),
@@ -472,8 +474,45 @@ function createWeatherDashboard() {
   function renderTable() {
     els.rowsTbody.innerHTML = "";
 
-    // Rows are assumed oldest->newest. We want newest first for mobile.
-    const lastRows = [...state.rangeRows].reverse().slice(0, DEFAULTS.maxTableRows);
+    let tableRenderToken = 0;
+
+    async function renderTable() {
+      const myToken = ++tableRenderToken;
+
+      els.rowsTbody.innerHTML = "";
+
+      // Rows are assumed oldest->newest. We want newest first for mobile.
+      const allRows = [...state.rangeRows].reverse();
+
+      if (allRows.length === 0) return;
+
+      const CHUNK_SIZE = 250; // iOS-friendly: keep UI responsive
+
+      for (let i = 0; i < allRows.length; i += CHUNK_SIZE) {
+        // If a new render started (range changed / refresh), abandon this one.
+        if (myToken !== tableRenderToken) return;
+
+        const frag = document.createDocumentFragment();
+        const end = Math.min(i + CHUNK_SIZE, allRows.length);
+
+        for (let j = i; j < end; j++) {
+          const r = allRows[j];
+          const tr = document.createElement("tr");
+          tr.innerHTML = `
+          <td>${formatTime(r.ts_ms)}</td>
+          <td>${formatTemp(r.t_c, state.unit)}</td>
+          <td>${formatRh(r.rh)}</td>
+          <td>${formatPressure(r.p_slp_pa)}</td>
+        `;
+          frag.appendChild(tr);
+        }
+
+        els.rowsTbody.appendChild(frag);
+
+        // Yield to the browser so scrolling/taps remain responsive
+        await new Promise(requestAnimationFrame);
+      }
+    }
 
     for (const r of lastRows) {
       const tr = document.createElement("tr");
@@ -575,7 +614,7 @@ function createWeatherDashboard() {
 
   function renderAll() {
     renderLatest();
-    renderTable();
+    void renderTable();
     renderSparkline();
     renderPressureTrend();
     updateCsvLink();
@@ -621,7 +660,7 @@ function createWeatherDashboard() {
 
   async function refreshRange() {
     setError("");
-    const { from_ms, to_ms } = getRangeWindowMs();
+    const {from_ms, to_ms} = getRangeWindowMs();
 
     const params = withStation(
       {
@@ -639,12 +678,22 @@ function createWeatherDashboard() {
       );
       const payload = /** @type {RangePayload} */ (data);
       state.rangeRows = payload.rows || [];
-      renderTable();
+      void renderTable();
       renderSparkline();
       renderPressureTrend();
     } catch (e) {
       setError(`Range failed: ${e instanceof Error ? e.message : String(e)}`);
     }
+  }
+
+  const BACK_TO_TOP_SCROLL_Y = 600;
+
+  function setBackToTopVisible(on) {
+    els.backToTop.classList.toggle("is-visible", !!on);
+  }
+
+  function onScroll() {
+    setBackToTopVisible(window.scrollY > BACK_TO_TOP_SCROLL_Y);
   }
 
   function wireUI() {
@@ -662,6 +711,13 @@ function createWeatherDashboard() {
         setRange(range);
       });
     });
+
+    els.backToTop.addEventListener("click", () => {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    });
+
+    window.addEventListener("scroll", onScroll, { passive: true });
+    onScroll(); // set initial visibility
   }
 
   let latestTimer = /** @type {number|undefined} */ (undefined);
@@ -684,6 +740,7 @@ function createWeatherDashboard() {
   function stop() {
     if (latestTimer) window.clearInterval(latestTimer);
     latestTimer = undefined;
+    window.removeEventListener("scroll", onScroll);
   }
 
   return {
