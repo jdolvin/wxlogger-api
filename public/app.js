@@ -512,9 +512,7 @@ function renderRange(state, els) {
   const rows = state.rangeRows || [];
   els.rowsTbody.innerHTML = "";
 
-  const limited = rows.slice(-DEFAULTS.maxTableRows);
-
-  for (const r of limited) {
+  for (const r of rows) {
     const tr = document.createElement("tr");
 
     const tdT = document.createElement("td");
