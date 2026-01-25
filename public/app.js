@@ -69,6 +69,8 @@
  * @property {HTMLButtonElement} refreshBtn
  * @property {HTMLElement} unitF
  * @property {HTMLElement} unitC
+ * @property {HTMLElement} dewValue
+ * @property {HTMLElement} feelValue
  */
 
 const RANGE_MS = /** @type {const} */ ({
@@ -244,6 +246,107 @@ function withStation(baseParams, stationId) {
 }
 
 /**
+ * Dew point in Celsius from temperature (C) and RH (%).
+ * Magnus formula (good for typical ambient ranges).
+ * @param {number} t_c
+ * @param {number} rh
+ */
+function dewPointC(t_c, rh) {
+  const T = Number(t_c);
+  const RH = Number(rh);
+  if (!Number.isFinite(T) || !Number.isFinite(RH) || RH <= 0 || RH > 100) return NaN;
+
+  const a = 17.27;
+  const b = 237.7;
+  const gamma = (a * T) / (b + T) + Math.log(RH / 100);
+  return (b * gamma) / (a - gamma);
+}
+
+/**
+ * Feels-like (apparent temperature) in Celsius using Steadman-style approximation
+ * with wind speed assumed ~0 (since we don't have wind).
+ * @param {number} t_c
+ * @param {number} rh
+ */
+function feelsLikeC(t_c, rh) {
+  const T = Number(t_c);
+  const RH = Number(rh);
+  if (!Number.isFinite(T) || !Number.isFinite(RH) || RH <= 0 || RH > 100) return NaN;
+
+  // vapor pressure e (hPa)
+  const e = (RH / 100) * 6.105 * Math.exp((17.27 * T) / (237.7 + T));
+  // Apparent temperature (shade, light wind ~0 m/s)
+  return T + 0.33 * e - 4.0;
+}
+
+/**
+ * Heat index in Fahrenheit (NOAA regression). Returns NaN if out of range.
+ * @param {number} t_f
+ * @param {number} rh
+ */
+function heatIndexF(t_f, rh) {
+  const T = Number(t_f);
+  const R = Number(rh);
+  if (!Number.isFinite(T) || !Number.isFinite(R)) return NaN;
+
+  // Only meaningful in warm/humid conditions
+  if (T < 80 || R < 40) return NaN;
+
+  const HI =
+    -42.379 +
+    2.04901523 * T +
+    10.14333127 * R -
+    0.22475541 * T * R -
+    0.00683783 * T * T -
+    0.05481717 * R * R +
+    0.00122874 * T * T * R +
+    0.00085282 * T * R * R -
+    0.00000199 * T * T * R * R;
+
+  return HI;
+}
+
+/**
+ * @param {unknown} t_c
+ * @param {unknown} rh
+ * @param {Unit} unit
+ */
+function formatDewPoint(t_c, rh, unit) {
+  if (!isFiniteNumber(t_c) || !isFiniteNumber(rh)) return "—";
+  const dpC = dewPointC(Number(t_c), Number(rh));
+  if (!Number.isFinite(dpC)) return "—";
+  const v = unit === "F" ? cToF(dpC) : dpC;
+  return `${v.toFixed(1)}°${unit}`;
+}
+
+/**
+ * @param {unknown} t_c
+ * @param {unknown} rh
+ * @param {Unit} unit
+ */
+function formatFeelsLike(t_c, rh, unit) {
+  if (!isFiniteNumber(t_c) || !isFiniteNumber(rh)) return "—";
+
+  const T_c = Number(t_c);
+  const RH = Number(rh);
+
+  // Prefer heat index when truly hot/humid (more intuitive for users)
+  const T_f = cToF(T_c);
+  const hiF = heatIndexF(T_f, RH);
+
+  let outC;
+  if (Number.isFinite(hiF)) {
+    outC = (hiF - 32) * 5 / 9; // convert heat index back to C for unified unit handling
+  } else {
+    outC = feelsLikeC(T_c, RH);
+  }
+
+  if (!Number.isFinite(outC)) return "—";
+  const v = unit === "F" ? cToF(outC) : outC;
+  return `${v.toFixed(1)}°${unit}`;
+}
+
+/**
  * Fetch JSON with an iOS-friendly timeout and no-store caching.
  * @template T
  * @param {string} url
@@ -287,7 +390,9 @@ function createWeatherDashboard() {
     pslpTrend: getEl("pslpTrend"),
     refreshBtn: /** @type {HTMLButtonElement} */ (getEl("refreshBtn")),
     unitF: getEl("unitF"),
-    unitC: getEl("unitC")
+    unitC: getEl("unitC"),
+    dewValue: getEl("dewValue"),
+    feelValue: getEl("feelValue")
   };
 
   /** @type {DashboardState} */
@@ -342,6 +447,8 @@ function createWeatherDashboard() {
     els.rhValue.textContent = formatRh(l.metrics?.rh);
     els.pslpValue.textContent = formatPressure(l.metrics?.p_slp_pa);
     els.rssiValue.textContent = formatRssi(l.metrics?.rssi_dbm);
+    els.dewValue.textContent = formatDewPoint(l.metrics?.t_c, l.metrics?.rh, state.unit);
+    els.feelValue.textContent = formatFeelsLike(l.metrics?.t_c, l.metrics?.rh, state.unit);
   }
 
   function renderPressureTrend() {
