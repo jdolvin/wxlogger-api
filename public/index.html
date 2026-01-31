@@ -2,110 +2,297 @@
 <html lang="en">
 <head>
     <!--
-      Local Weather Dashboard
-      ----------------------
-      This is intentionally “vanilla” HTML that pairs with /styles.css and /app.js.
+      ============================================================================
+      Local Weather Dashboard - HTML Structure
+      ============================================================================
 
-      Conventions:
-        - IDs are stable integration points for app.js (do not rename without updating JS).
-        - Buttons use type="button" to prevent accidental form submission on mobile.
-        - ARIA is applied where it adds value (alerts, groups, table labeling).
+      A clean, accessible single-page weather dashboard for personal weather stations.
+
+      DESIGN PRINCIPLES:
+      -----------------
+      - Semantic HTML5 for accessibility and SEO
+      - Mobile-first responsive design
+      - Progressive enhancement (works without JavaScript for basic content)
+      - ARIA attributes for screen reader support
+      - Safe area insets for modern iOS devices (notch support)
+
+      CUSTOMIZATION:
+      -------------
+      To adapt this for your weather station:
+      1. Update the <title> tag to match your station name
+      2. Modify metric labels if your sensors differ
+      3. Add/remove metric cards in the grid as needed
+      4. Adjust time range chips (1h, 3h, etc.) to your preferences
+
+      DEPENDENCIES:
+      ------------
+      - /styles.css - Visual styling and layout
+      - /app.js - Interactive functionality and API integration
+
+      BROWSER SUPPORT:
+      ---------------
+      - Modern browsers (Chrome, Firefox, Safari, Edge)
+      - iOS Safari 12+
+      - Android Chrome 80+
+      - Progressive Web App capable
+
+      @author Weather Logger Team
+      @version 2.0.0
     -->
+
+    <!-- Character encoding for international character support -->
     <meta charset="utf-8" />
+
+    <!--
+      Viewport configuration for responsive design
+      - width=device-width: Use device's actual width
+      - initial-scale=1: No initial zoom
+      - viewport-fit=cover: Extend to safe areas on notched devices (iPhone X+)
+    -->
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+
+    <!--
+      Color scheme preference
+      Indicates support for both light and dark modes
+      Browser will apply appropriate default colors for form controls
+    -->
     <meta name="color-scheme" content="light dark" />
+
+    <!-- Page title - appears in browser tab and bookmarks -->
     <title>Local Weather</title>
+
+    <!-- Main stylesheet - handles all visual presentation -->
     <link rel="stylesheet" href="/styles.css" />
 </head>
 
 <body>
+
+<!--
+  ============================================================================
+  ACCESSIBILITY: Skip Link
+  ============================================================================
+
+  Allows keyboard users to skip directly to main content
+  Hidden by default, visible when focused (see CSS)
+-->
 <a class="skip-link" href="#main">Skip to content</a>
 
+<!--
+  ============================================================================
+  HEADER: Top Navigation Bar
+  ============================================================================
+
+  Sticky header with station info and unit toggle
+  role="banner" indicates primary site navigation
+-->
 <header class="topbar" role="banner">
+    <!-- Station title and metadata -->
     <div class="title">
         <h1>Weather</h1>
-        <!-- JS fills this with "station • relative • absolute" -->
+
+        <!--
+          Subtitle: Dynamically populated by JavaScript
+          Format: "station_id • measured Xs ago • full_timestamp"
+          Initial value is placeholder em dash
+        -->
         <p class="subtitle" id="subtitle">—</p>
     </div>
 
+    <!-- Temperature unit toggle controls -->
     <div class="controls">
+        <!--
+          Segmented control for unit selection
+          role="group" groups related controls together
+          aria-label provides context for screen readers
+        -->
         <div class="segmented" role="group" aria-label="Temperature units">
-            <!-- app.js toggles .is-active -->
+            <!--
+              Unit buttons: Fahrenheit and Celsius
+              - type="button" prevents form submission if wrapped in <form>
+              - .is-active class indicates current selection (toggled by JS)
+              - aria-pressed indicates toggle state for screen readers
+            -->
             <button id="unitF" class="seg-btn is-active" type="button" aria-pressed="true">°F</button>
             <button id="unitC" class="seg-btn" type="button" aria-pressed="false">°C</button>
         </div>
     </div>
 </header>
 
+<!--
+  ============================================================================
+  MAIN CONTENT AREA
+  ============================================================================
+
+  Contains all primary dashboard content
+  role="main" indicates primary content area
+  Max-width container centers content on large screens
+-->
 <main id="main" class="container" role="main">
-    <!-- Error banner: hidden unless JS sets message -->
+
+    <!--
+      ========================================================================
+      ERROR BANNER
+      ========================================================================
+
+      Displays API errors or connection issues
+      - .hidden class hides by default (removed by JS when error occurs)
+      - role="alert" announces errors to screen readers immediately
+      - aria-live="assertive" interrupts screen reader to announce errors
+    -->
     <section id="errorBox" class="error hidden" role="alert" aria-live="assertive"></section>
 
-    <!-- Latest card -->
+    <!--
+      ========================================================================
+      LATEST READINGS CARD
+      ========================================================================
+
+      Displays the most recent weather station reading
+      All values are updated every 15 seconds by JavaScript
+    -->
     <section class="card" aria-labelledby="latestTitle">
+        <!-- Card header with timestamp and refresh button -->
         <div class="card-header">
             <div>
+                <!-- Section label -->
                 <div class="label" id="latestTitle">Latest</div>
+
+                <!--
+                  Timestamp of latest reading
+                  Format: "Jan 31, 02:30 PM" (localized)
+                  Updated by JavaScript
+                -->
                 <div class="value" id="latestTime">—</div>
             </div>
 
+            <!--
+              Manual refresh button
+              Forces immediate data refresh instead of waiting for auto-poll
+            -->
             <button id="refreshBtn" class="btn" type="button">Refresh</button>
         </div>
 
+        <!--
+          Metrics Grid
+          Responsive 2-column layout on desktop, 1-column on mobile
+          Each metric card shows a label and value
+        -->
         <div class="grid" aria-label="Latest metrics">
+            <!-- Temperature -->
             <div class="metric">
                 <div class="label">Temperature</div>
                 <div class="big" id="tempValue" aria-label="Temperature">—</div>
             </div>
 
+            <!-- Relative Humidity -->
             <div class="metric">
                 <div class="label">Humidity</div>
                 <div class="big" id="rhValue" aria-label="Humidity">—</div>
             </div>
 
+            <!--
+              Sea-Level Pressure (barometric pressure)
+              Includes trend indicator (rising/falling/steady)
+            -->
             <div class="metric">
                 <div class="label">Sea-level Pressure</div>
                 <div class="big" id="pslpValue" aria-label="Sea-level pressure">—</div>
                 <div class="sub" id="pslpTrend" aria-label="Pressure trend">—</div>
             </div>
 
+            <!--
+              RSSI: Received Signal Strength Indicator
+              Shows WiFi/radio signal quality in dBm
+              Useful for troubleshooting connectivity issues
+            -->
             <div class="metric">
                 <div class="label">RSSI</div>
                 <div class="big" id="rssiValue" aria-label="Signal strength">—</div>
             </div>
 
+            <!--
+              Dew Point: Temperature at which air becomes saturated
+              Computed from temperature and humidity using Magnus formula
+            -->
             <div class="metric">
                 <div class="label">Dew Point</div>
                 <div class="big" id="dewValue" aria-label="Dew point">—</div>
             </div>
 
+            <!--
+              Feels Like: Heat index or wind chill
+              Currently only computes heat index (no wind data)
+            -->
             <div class="metric">
                 <div class="label">Feels Like</div>
                 <div class="big" id="feelValue" aria-label="Feels like temperature">—</div>
             </div>
         </div>
 
+        <!--
+          Temperature Sparkline Chart
+          Visualizes temperature trend over selected time range
+          Rendered on HTML5 canvas by JavaScript
+        -->
         <figure class="spark-wrap" aria-labelledby="sparkTitle">
             <figcaption class="label" id="sparkTitle">Temp trend</figcaption>
+
+            <!--
+              Canvas element for sparkline
+              - width/height are canvas resolution (not CSS size)
+              - Actual display size controlled by CSS
+              - High-DPI rendering handled by JavaScript
+            -->
             <canvas id="spark" width="600" height="120" aria-label="Temperature sparkline"></canvas>
         </figure>
     </section>
 
-    <!-- History card -->
+    <!--
+      ========================================================================
+      HISTORY CARD
+      ========================================================================
+
+      Displays historical data with:
+      - Time range selector
+      - Min/Max temperature extremes
+      - Data table with recent readings
+      - CSV download option
+    -->
     <section class="card" aria-labelledby="historyTitle">
+        <!-- Card header with range label and CSV download -->
         <div class="card-header">
             <div>
                 <div class="label" id="historyTitle">History</div>
+
+                <!--
+                  Currently selected time range
+                  Updated by JavaScript when range changes
+                -->
                 <div class="value" id="rangeLabel">Last 3h</div>
             </div>
 
+            <!--
+              CSV Download Link
+              - href is dynamically updated by JavaScript to include current filters
+              - download attribute triggers file download instead of navigation
+            -->
             <a id="csvLink" class="btn btn-secondary" href="#" download aria-label="Download CSV for selected range">
                 CSV
             </a>
         </div>
 
+        <!--
+          Time Range Selection Chips
+          Horizontal scrolling row of time period buttons
+          Click to change the displayed historical range
+        -->
         <div class="range" role="group" aria-label="History range">
-            <!-- app.js toggles .is-active -->
+            <!--
+              Each chip has data-range attribute that JavaScript uses
+              .is-active class indicates current selection
+              Available ranges: 1h, 3h, 6h, 12h, 24h, 7d
+
+              Customization: Add/remove chips as needed for your use case
+            -->
             <button class="chip" data-range="1h" type="button">1h</button>
             <button class="chip is-active" data-range="3h" type="button">3h</button>
             <button class="chip" data-range="6h" type="button">6h</button>
@@ -114,14 +301,24 @@
             <button class="chip" data-range="7d" type="button">7d</button>
         </div>
 
-        <!-- NEW: min/max for selected range -->
+        <!--
+          Temperature Extremes for Selected Range
+          Shows minimum and maximum temperatures within the chosen time window
+          Values and timestamps updated by JavaScript
+        -->
         <div class="grid" aria-label="Range temperature extremes" style="margin-top: 10px;">
+            <!-- Minimum Temperature -->
             <div class="metric">
+                <!--
+                  Label includes <span data-extremes-range>
+                  This span is updated by JS to match selected range
+                -->
                 <div class="label">Min Temp (<span data-extremes-range>last 3h</span>)</div>
                 <div class="big" id="minTempValue" aria-label="Minimum temperature">—</div>
                 <div class="sub" id="minTempTime" aria-label="Time of minimum temperature">—</div>
             </div>
 
+            <!-- Maximum Temperature -->
             <div class="metric">
                 <div class="label">Max Temp (<span data-extremes-range>last 3h</span>)</div>
                 <div class="big" id="maxTempValue" aria-label="Maximum temperature">—</div>
@@ -129,28 +326,72 @@
             </div>
         </div>
 
+        <!--
+          Historical Data Table
+          Shows recent readings in reverse chronological order (newest first)
+          Scrollable on mobile devices
+        -->
         <div class="table-wrap">
             <table class="table" aria-label="Recent readings">
                 <thead>
                 <tr>
+                    <!--
+                      Column Headers
+                      scope="col" indicates these are column headers
+
+                      Columns:
+                      - Time: When the reading was taken
+                      - Temp: Temperature (in selected unit)
+                      - RH: Relative Humidity percentage
+                      - SLP: Sea-Level Pressure
+                    -->
                     <th scope="col">Time</th>
                     <th scope="col">Temp</th>
                     <th scope="col">RH</th>
                     <th scope="col">SLP</th>
                 </tr>
                 </thead>
+
+                <!--
+                  Table Body
+                  Populated dynamically by JavaScript
+                  Empty by default, filled after initial API call
+                -->
                 <tbody id="rows"></tbody>
             </table>
         </div>
     </section>
 </main>
 
-<!-- Back to top (shown after scrolling) -->
+<!--
+  ============================================================================
+  BACK TO TOP BUTTON
+  ============================================================================
+
+  Floating button that appears after scrolling down
+  Smoothly scrolls back to top when clicked
+  Hidden by default, shown by JavaScript after scrolling past 600px
+-->
 <button id="backToTop" class="back-to-top" type="button" aria-label="Back to top">
     Top
 </button>
 
-<!-- Defer parsing so DOM is ready before app.js binds handlers -->
+<!--
+  ============================================================================
+  JAVASCRIPT
+  ============================================================================
+
+  Main application logic and API integration
+  - defer attribute: Script loads in parallel but executes after DOM is ready
+  - Ensures all elements are available before JavaScript runs
+
+  For customization, see app.js for:
+  - API endpoint configuration
+  - Polling intervals
+  - Data formatting functions
+  - Additional metrics/calculations
+-->
 <script src="/app.js" defer></script>
+
 </body>
 </html>

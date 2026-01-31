@@ -1,114 +1,261 @@
-/* ==========================================================================
+/* =============================================================================
    Local Weather Dashboard Styles
-   - Organized by: tokens -> base -> layout -> components -> utilities
-   - Minimal repetition via tokens, shared rules, and :where() specificity control
+   =============================================================================
+
+   A modern, minimal design system for personal weather station dashboards.
+
+   ARCHITECTURE:
+   ------------
+   This stylesheet is organized in the following order:
+   1. CSS Custom Properties (Design Tokens)
+   2. CSS Reset & Base Styles
+   3. Layout Components
+   4. Typography Utilities
+   5. UI Components (cards, buttons, controls)
+   6. Data Visualization
+   7. Error & Alert States
+   8. Accessibility Features
+   9. Responsive Media Queries
+
+   DESIGN PRINCIPLES:
+   -----------------
+   - Mobile-first responsive design
+   - Dark theme optimized for low-light viewing
+   - Minimal repetition via CSS custom properties
+   - Accessible color contrast (WCAG AA compliant)
+   - Performance-optimized (no heavy animations)
+
+   CUSTOMIZATION:
+   -------------
+   To adapt this theme to your preferences:
+   1. Modify colors in the :root CSS variables section
+   2. Adjust spacing/sizing tokens as needed
+   3. Update typography values for different screen sizes
+   4. Add media queries for your target devices
+
+   BROWSER SUPPORT:
+   ---------------
+   - Modern browsers with CSS custom properties support
+   - iOS Safari 12+ (includes safe-area-inset support)
+   - Chrome/Edge/Firefox (last 2 versions)
+
+   @author Weather Logger Team
+   @version 2.0.0
+   ========================================================================== */
+
+/* =============================================================================
+   1. CSS CUSTOM PROPERTIES (Design Tokens)
+   =============================================================================
+
+   Centralized design values for easy theme customization.
+   Change these values to quickly rebrand the entire interface.
    ========================================================================== */
 
 :root {
-  /* Color tokens */
-  --bg: #0b0c10;
-  --card: #12141b;
-  --text: #e8eaf0;
-  --muted: #a8afc2;
-  --border: #232738;
-  --danger: #ff5a5f;
+  /* ---------------------------------------------------------------------------
+     Color Palette
+     ---------------------------------------------------------------------------
+     Dark theme optimized for nighttime viewing and reduced eye strain.
+     All colors are defined in the :root for easy theme switching.
+  */
 
-  /* Surface + controls */
-  --btn: #1f2433;
-  --btn2: #171b26;
+  /* Background colors */
+  --bg: #0b0c10;           /* Page background - deep charcoal */
+  --card: #12141b;         /* Card backgrounds - slightly lighter */
 
-  /* Common alphas (kept explicit for readability) */
+  /* Text colors */
+  --text: #e8eaf0;         /* Primary text - off-white for reduced contrast */
+  --muted: #a8afc2;        /* Secondary text - muted gray for labels */
+
+  /* UI colors */
+  --border: #232738;       /* Border color - subtle separation */
+  --danger: #ff5a5f;       /* Error/alert color - coral red */
+
+  /* Interactive surfaces */
+  --btn: #1f2433;          /* Primary button background */
+  --btn2: #171b26;         /* Secondary button background */
+
+  /* ---------------------------------------------------------------------------
+     Alpha Channel Colors
+     ---------------------------------------------------------------------------
+     White overlays with transparency for layering effects.
+     Kept explicit (not rgba()) for better readability in usage.
+  */
   --w03: rgba(255, 255, 255, 0.03);
   --w06: rgba(255, 255, 255, 0.06);
   --w08: rgba(255, 255, 255, 0.08);
   --w10: rgba(255, 255, 255, 0.10);
 
-  /* Radii */
-  --r-sm: 12px;
-  --r-md: 14px;
-  --r-pill: 999px;
+  /* ---------------------------------------------------------------------------
+     Border Radius Tokens
+     ---------------------------------------------------------------------------
+     Consistent corner rounding throughout the interface.
+  */
+  --r-sm: 12px;            /* Small radius - buttons, inputs */
+  --r-md: 14px;            /* Medium radius - cards */
+  --r-pill: 999px;         /* Pill shape - chips, tags */
 
-  /* Spacing */
-  --pad-page: 16px;
-  --gap: 14px;
+  /* ---------------------------------------------------------------------------
+     Spacing Tokens
+     ---------------------------------------------------------------------------
+     Consistent spacing system based on 2px increments.
+  */
+  --pad-page: 16px;        /* Page padding - outer margins */
+  --gap: 14px;             /* Default gap between elements */
 
-  /* Typography */
-  --fs-12: 12px;
-  --fs-13: 13px;
-  --fs-14: 14px;
-  --fs-20: 20px;
-  --fs-22: 22px;
+  /* ---------------------------------------------------------------------------
+     Typography Scale
+     ---------------------------------------------------------------------------
+     Font sizes in ascending order for hierarchical text.
+  */
+  --fs-12: 12px;           /* Small - labels, captions */
+  --fs-13: 13px;           /* Body small - table text */
+  --fs-14: 14px;           /* Body - default text */
+  --fs-20: 20px;           /* Large - page title */
+  --fs-22: 22px;           /* Extra large - metric values */
 
-  /* Borders */
+  /* ---------------------------------------------------------------------------
+     Border Definitions
+     ---------------------------------------------------------------------------
+     Reusable border styles.
+  */
   --b1: 1px solid var(--border);
 }
 
-/* Base reset-ish */
-* { box-sizing: border-box; }
+/* =============================================================================
+   2. CSS RESET & BASE STYLES
+   =============================================================================
 
-html, body { height: 100%; }
+   Normalize browser defaults and set global styles.
+   ========================================================================== */
+
+/* Apply border-box sizing to all elements for easier layout calculations */
+* {
+  box-sizing: border-box;
+}
+
+/* Ensure html and body fill the viewport height */
+html, body {
+  height: 100%;
+}
 
 body {
+  /* Reset default margin */
   margin: 0;
+
+  /* Apply theme colors */
   background: var(--bg);
   color: var(--text);
+
+  /*
+    System font stack for native feel and optimal performance
+    Falls back through: macOS -> Windows -> Linux -> Generic
+  */
   font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
 }
 
-/* Layout */
+/* =============================================================================
+   3. LAYOUT COMPONENTS
+   =============================================================================
+
+   Major layout structures: header, container, grids.
+   ========================================================================== */
+
+/* ---------------------------------------------------------------------------
+   Top Navigation Bar
+   ---------------------------------------------------------------------------
+   Sticky header that remains visible during scrolling.
+*/
 .topbar {
+  /* Sticky positioning keeps header at top while scrolling */
   position: sticky;
   top: 0;
-  z-index: 10;
+  z-index: 10;  /* Above page content */
 
+  /* Flexbox layout for title and controls */
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
 
+  /* Spacing with iOS safe area support */
   padding: 14px 16px;
+  /* Extra top padding on iOS devices with notch */
   padding-top: calc(14px + env(safe-area-inset-top));
 
+  /* Frosted glass effect */
   background: rgba(11, 12, 16, 0.92);
   backdrop-filter: blur(10px);
+
+  /* Subtle bottom border */
   border-bottom: var(--b1);
 }
 
+/* ---------------------------------------------------------------------------
+   Main Content Container
+   ---------------------------------------------------------------------------
+   Centers content and provides consistent spacing.
+*/
 .container {
+  /* Maximum width for readability on large screens */
   max-width: 760px;
   margin: 0 auto;
 
+  /* Vertical stack layout */
   display: flex;
   flex-direction: column;
   gap: var(--gap);
 
+  /* Page padding with iOS safe area support */
   padding: var(--pad-page);
+  /* Extra bottom padding on iOS devices with home indicator */
   padding-bottom: calc(var(--pad-page) + env(safe-area-inset-bottom));
 }
 
-/* Typography helpers */
+/* =============================================================================
+   4. TYPOGRAPHY UTILITIES
+   =============================================================================
+
+   Text styling classes for consistent typography hierarchy.
+   ========================================================================== */
+
+/* Page title */
 .title h1 {
   margin: 0;
   font-size: var(--fs-20);
-  line-height: 1.1;
+  line-height: 1.1;  /* Tight line height for single-line titles */
 }
 
+/* Subtitle text (below page title) */
 .subtitle {
   margin-top: 4px;
   color: var(--muted);
   font-size: var(--fs-12);
 }
 
+/* Generic label text */
 .label {
   color: var(--muted);
   font-size: var(--fs-12);
 }
 
+/* Generic value text */
 .value {
   font-size: var(--fs-14);
 }
 
-/* Components */
+/* =============================================================================
+   5. UI COMPONENTS
+   =============================================================================
+
+   Reusable interface elements: cards, buttons, controls, metrics.
+   ========================================================================== */
+
+/* ---------------------------------------------------------------------------
+   Card Component
+   ---------------------------------------------------------------------------
+   Container for grouped content with elevated appearance.
+*/
 .card {
   background: var(--card);
   border: var(--b1);
@@ -116,6 +263,7 @@ body {
   padding: 14px;
 }
 
+/* Card header (title + actions) */
 .card-header {
   display: flex;
   align-items: center;
@@ -124,25 +272,38 @@ body {
   margin-bottom: 10px;
 }
 
+/* ---------------------------------------------------------------------------
+   Grid Layout
+   ---------------------------------------------------------------------------
+   Two-column responsive grid for metric cards.
+*/
 .grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr 1fr;  /* Equal columns */
   gap: 10px;
 }
 
+/* ---------------------------------------------------------------------------
+   Metric Card
+   ---------------------------------------------------------------------------
+   Individual metric display with label and value.
+*/
 .metric {
+  /* Subtle layered background */
   background: var(--w03);
   border: 1px solid var(--w06);
   border-radius: var(--r-sm);
   padding: 12px;
 }
 
+/* Large metric value (temperature, humidity, etc.) */
 .big {
   margin-top: 6px;
   font-size: var(--fs-22);
-  font-weight: 650;
+  font-weight: 650;  /* Semi-bold for emphasis */
 }
 
+/* Sub-text below metric value (trend, timestamp, etc.) */
 .sub {
   margin-top: 6px;
   color: var(--muted);
@@ -150,79 +311,135 @@ body {
   font-weight: 650;
 }
 
-/* Buttons / controls */
+/* ---------------------------------------------------------------------------
+   Button Components
+   ---------------------------------------------------------------------------
+   Primary and secondary button styles.
+*/
 .btn {
+  /* Flexbox for icon + text alignment */
   display: inline-flex;
   align-items: center;
   justify-content: center;
+
+  /* Minimum width prevents tiny buttons */
   min-width: 88px;
 
+  /* Spacing and shape */
   padding: 10px 12px;
   border-radius: var(--r-sm);
+
+  /* Text styling */
   text-decoration: none;
   font-weight: 600;
   color: var(--text);
 
+  /* Surface styling */
   background: var(--btn);
   border: 1px solid var(--w08);
 
-  /* Prevent 300ms tap highlight weirdness on iOS */
+  /*
+    Disable iOS tap highlight (we use :active state instead)
+    Prevents blue flash on tap
+  */
   -webkit-tap-highlight-color: transparent;
 }
 
-.btn:active { transform: translateY(1px); }
+/* Button pressed state - subtle movement feedback */
+.btn:active {
+  transform: translateY(1px);
+}
 
-.btn-secondary { background: var(--btn2); }
+/* Secondary button variant (less prominent) */
+.btn-secondary {
+  background: var(--btn2);
+}
 
+/* ---------------------------------------------------------------------------
+   Segmented Control
+   ---------------------------------------------------------------------------
+   iOS-style button group for mutually exclusive options.
+*/
 .segmented {
   display: flex;
   border: 1px solid var(--w10);
   border-radius: var(--r-sm);
-  overflow: hidden;
+  overflow: hidden;  /* Clip child borders */
 }
 
+/* Individual segment button */
 .seg-btn {
+  /* Remove default button styling */
   border: 0;
   background: transparent;
+
+  /* Text styling */
   color: var(--muted);
   padding: 10px 12px;
   font-weight: 700;
+
+  /* Disable iOS tap highlight */
   -webkit-tap-highlight-color: transparent;
 }
 
+/* Active segment (currently selected) */
 .seg-btn.is-active {
   background: var(--w08);
   color: var(--text);
 }
 
-/* Range chips */
+/* ---------------------------------------------------------------------------
+   Range Selection Chips
+   ---------------------------------------------------------------------------
+   Horizontal scrolling row of time range buttons.
+*/
 .range {
   display: flex;
   gap: 8px;
+
+  /* Horizontal scroll on overflow */
   overflow: auto;
+
+  /* Bottom padding for scroll indicator spacing */
   padding-bottom: 6px;
+
+  /* iOS momentum scrolling */
   -webkit-overflow-scrolling: touch;
 }
 
-/* Range extremes block (min/max within selected range) */
-.extremes {
-  margin-top: 10px;
-}
-
+/* Individual chip button */
 .chip {
+  /* Surface */
   border: 1px solid var(--w10);
   background: var(--w03);
   color: var(--text);
+
+  /* Spacing */
   padding: 8px 10px;
+
+  /* Pill shape */
   border-radius: var(--r-pill);
+
+  /* Text */
   font-weight: 650;
-  white-space: nowrap;
+  white-space: nowrap;  /* Prevent text wrapping */
+
+  /* Disable iOS tap highlight */
   -webkit-tap-highlight-color: transparent;
 }
 
-.chip.is-active { background: var(--w10); }
+/* Active chip (currently selected range) */
+.chip.is-active {
+  background: var(--w10);
+}
 
-/* Table */
+/* ---------------------------------------------------------------------------
+   Data Table
+   ---------------------------------------------------------------------------
+   Historical data display with scrollable overflow.
+*/
+
+/* Table wrapper - enables horizontal scroll on small screens */
 .table-wrap {
   margin-top: 10px;
   overflow-x: auto;
@@ -230,27 +447,46 @@ body {
   border-radius: var(--r-sm);
 }
 
+/* Table element */
 .table {
   width: 100%;
-  min-width: 520px;
+  min-width: 520px;  /* Prevents squishing on very small screens */
   border-collapse: collapse;
 }
 
+/* Table cells (both headers and data) */
 .table :where(th, td) {
   padding: 10px;
   border-bottom: 1px solid var(--w06);
   font-size: var(--fs-13);
 }
 
+/* Table headers */
 .table th {
   color: var(--muted);
   font-weight: 700;
   text-align: left;
 }
 
-/* Sparkline */
-.spark-wrap { margin-top: 10px; }
+/* =============================================================================
+   6. DATA VISUALIZATION
+   =============================================================================
 
+   Chart and graph styling.
+   ========================================================================== */
+
+/* ---------------------------------------------------------------------------
+   Sparkline Chart
+   ---------------------------------------------------------------------------
+   Temperature trend visualization canvas.
+*/
+
+/* Sparkline container */
+.spark-wrap {
+  margin-top: 10px;
+}
+
+/* Canvas element for sparkline rendering */
 #spark {
   width: 100%;
   height: auto;
@@ -259,50 +495,148 @@ body {
   background: var(--w03);
 }
 
-/* Error banner */
+/* =============================================================================
+   7. ERROR & ALERT STATES
+   =============================================================================
+
+   Error messages and warning banners.
+   ========================================================================== */
+
+/* ---------------------------------------------------------------------------
+   Error Banner
+   ---------------------------------------------------------------------------
+   Displays connection errors or API failures.
+*/
 .error {
   padding: 12px;
   border-radius: var(--r-sm);
+
+  /* Red tinted border and background */
   border: 1px solid rgba(255, 90, 95, 0.35);
   background: rgba(255, 90, 95, 0.12);
+
   color: var(--text);
 }
 
-.hidden { display: none !important; }
+/* Hide elements (used by JavaScript to toggle visibility) */
+.hidden {
+  display: none !important;
+}
 
-/* Back to top */
+/* =============================================================================
+   8. ACCESSIBILITY FEATURES
+   =============================================================================
+
+   Screen reader support and keyboard navigation.
+   ========================================================================== */
+
+/* ---------------------------------------------------------------------------
+   Back to Top Button
+   ---------------------------------------------------------------------------
+   Floating button for quick scroll to top (shown after scrolling).
+*/
 .back-to-top {
+  /* Fixed positioning in bottom-right corner */
   position: fixed;
   right: 14px;
   bottom: 14px;
+
+  /* Button styling */
   padding: 10px 12px;
   border-radius: var(--r-sm);
   border: 1px solid var(--w08);
   background: rgba(31, 36, 51, 0.95);
   color: var(--text);
   font-weight: 700;
+
+  /* Hidden by default */
   display: none;
 }
 
-.back-to-top.is-visible { display: inline-flex; }
+/* Visible state (toggled by JavaScript after scrolling) */
+.back-to-top.is-visible {
+  display: inline-flex;
+}
 
-/* Accessibility */
+/* ---------------------------------------------------------------------------
+   Skip Link
+   ---------------------------------------------------------------------------
+   Allows keyboard users to skip navigation and jump to main content.
+   Hidden off-screen by default, visible when focused via Tab key.
+*/
 .skip-link {
+  /* Position off-screen */
   position: absolute;
   left: -999px;
   top: 8px;
+
+  /* Button-like styling */
   background: var(--btn);
   color: var(--text);
   padding: 8px 10px;
   border-radius: var(--r-sm);
   border: 1px solid var(--w10);
+
+  /* Ensure it appears above other content when focused */
   z-index: 999;
 }
 
-.skip-link:focus { left: 8px; }
-
-/* Small screens */
-@media (max-width: 560px) {
-  .grid { grid-template-columns: 1fr; }
-  .btn { min-width: 72px; }
+/* Move into view when focused (via Tab key) */
+.skip-link:focus {
+  left: 8px;
 }
+
+/* =============================================================================
+   9. RESPONSIVE MEDIA QUERIES
+   =============================================================================
+
+   Adaptations for different screen sizes.
+   ========================================================================== */
+
+/* ---------------------------------------------------------------------------
+   Small Screens (Mobile Phones)
+   ---------------------------------------------------------------------------
+   Adjustments for screens narrower than 560px.
+*/
+@media (max-width: 560px) {
+  /* Stack metric grid into single column */
+  .grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* Reduce button minimum width on small screens */
+  .btn {
+    min-width: 72px;
+  }
+}
+
+/* =============================================================================
+   CUSTOMIZATION GUIDE FOR MAKERS
+   =============================================================================
+
+   QUICK THEME CHANGES:
+   -------------------
+   1. Light Theme: Change --bg to #ffffff, --text to #000000, adjust other colors
+   2. Blue Theme: Change --btn colors to blue shades
+   3. Larger Text: Increase --fs-* values by 1-2px
+   4. More Spacing: Increase --gap and --pad-page values
+
+   ADDING METRICS:
+   --------------
+   1. Add new .metric div in HTML grid
+   2. Give it a unique ID for JavaScript updates
+   3. No CSS changes needed - inherits grid styling
+
+   CHANGING LAYOUT:
+   ---------------
+   1. Adjust .container max-width for wider/narrower content
+   2. Modify .grid columns (e.g., 1fr 1fr 1fr for 3 columns)
+   3. Change card border-radius for sharper/rounder corners
+
+   ACCESSIBILITY:
+   -------------
+   - Maintain color contrast ratios (use a contrast checker)
+   - Test with keyboard navigation (Tab, Enter, Space)
+   - Verify with screen reader (VoiceOver on macOS/iOS)
+
+   ========================================================================== */
