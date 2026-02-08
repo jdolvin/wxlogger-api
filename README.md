@@ -548,6 +548,7 @@ This project is licensed under the MIT License.
 - [ ] Weather Underground upload
 - [ ] Graph export (PNG/SVG)
 - [ ] Solar panel voltage/current monitoring
+- [ ] Integration with my portfolio website
 
 ---
 
